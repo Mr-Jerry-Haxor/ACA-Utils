@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import { DEFAULT_CONFIG } from '../src/js/default-config.js';
-import { normalizeText, organizationKey, personKey } from '../src/js/logic.js';
+import { normalizeText, personKey } from '../src/js/logic.js';
 
 const harPath = 'research data/scorecard-ui.tas-ewd.apps.boeing.com.har';
 if (!fs.existsSync(harPath)) {
@@ -14,18 +14,15 @@ const entry = (har.log?.entries ?? []).find((candidate) => {
 });
 const inventory = JSON.parse(entry.response.content.text);
 const applications = new Set(inventory.map((row) => normalizeText(row.Application)).filter(Boolean));
-const managersByOrganization = new Map();
-const asasByOrganization = new Map();
+const managers = new Set();
+const asas = new Set();
 for (const row of inventory) {
-  const organization = organizationKey(row.Maintaining_Organization);
-  if (!managersByOrganization.has(organization)) managersByOrganization.set(organization, new Set());
-  if (!asasByOrganization.has(organization)) asasByOrganization.set(organization, new Set());
-  if (row.Application_Manager) managersByOrganization.get(organization).add(personKey(row.Application_Manager));
-  if (row.Application_Security_Administrator) asasByOrganization.get(organization).add(personKey(row.Application_Security_Administrator));
+  if (row.Application_Manager) managers.add(personKey(row.Application_Manager));
+  if (row.Application_Security_Administrator) asas.add(personKey(row.Application_Security_Administrator));
 }
 const missingApplications = DEFAULT_CONFIG.applicationExceptions.filter((name) => !applications.has(normalizeText(name)));
-const missingManagers = DEFAULT_CONFIG.managerExceptions.filter((rule) => !managersByOrganization.get(organizationKey(rule.organization))?.has(personKey(rule.manager)));
-const missingAsas = DEFAULT_CONFIG.asaExceptions.filter((rule) => !asasByOrganization.get(organizationKey(rule.organization))?.has(personKey(rule.asa)));
+const missingManagers = DEFAULT_CONFIG.managerExceptions.filter((rule) => !managers.has(personKey(typeof rule === 'string' ? rule : rule.manager)));
+const missingAsas = DEFAULT_CONFIG.asaExceptions.filter((rule) => !asas.has(personKey(typeof rule === 'string' ? rule : rule.asa)));
 console.log(JSON.stringify({
   applicationExceptions: DEFAULT_CONFIG.applicationExceptions.length,
   matchedApplicationExceptions: DEFAULT_CONFIG.applicationExceptions.length - missingApplications.length,

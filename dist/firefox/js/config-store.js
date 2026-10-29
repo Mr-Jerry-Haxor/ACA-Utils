@@ -58,8 +58,10 @@ export function validateConfig(input) {
     restrictedOrganizations: {},
     managerExceptions: [],
     asaExceptions: [],
+    excludeBlankAsaFromScmp: Boolean(input.excludeBlankAsaFromScmp ?? input.excludeBlankAsa),
     applicationExceptions: cleanStringArray(input.applicationExceptions),
   };
+  if (input.updatedAt && !Number.isNaN(Date.parse(input.updatedAt))) config.updatedAt = new Date(input.updatedAt).toISOString();
   if (!/^\d{4,12}$/.test(config.bemsId)) throw new Error('BEMS ID must contain 4 to 12 digits.');
   if (!config.includedOrganizations.length) throw new Error('At least one maintenance organization is required.');
   for (const [organization, applications] of Object.entries(input.restrictedOrganizations ?? {})) {
@@ -69,15 +71,13 @@ export function validateConfig(input) {
   }
   if (!Array.isArray(input.managerExceptions)) throw new Error('Manager exceptions must be an array.');
   for (const rule of input.managerExceptions) {
-    const organization = cleanString(rule?.organization);
-    const manager = cleanString(rule?.manager);
-    if (organization && manager) config.managerExceptions.push({ organization, manager });
+    const manager = cleanString(typeof rule === 'string' ? rule : rule?.manager);
+    if (manager && !config.managerExceptions.includes(manager)) config.managerExceptions.push(manager);
   }
   if (input.asaExceptions != null && !Array.isArray(input.asaExceptions)) throw new Error('ASA exceptions must be an array.');
   for (const rule of input.asaExceptions ?? []) {
-    const organization = cleanString(rule?.organization);
-    const asa = cleanString(rule?.asa);
-    if (organization && asa) config.asaExceptions.push({ organization, asa });
+    const asa = cleanString(typeof rule === 'string' ? rule : rule?.asa);
+    if (asa && !config.asaExceptions.includes(asa)) config.asaExceptions.push(asa);
   }
   return config;
 }

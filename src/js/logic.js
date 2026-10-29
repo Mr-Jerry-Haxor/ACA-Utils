@@ -25,17 +25,15 @@ export function filterSupportedApplications(applications, config) {
     organizationKey(organization), new Set(names.map(normalizeText)),
   ]));
   const appExceptions = new Set(config.applicationExceptions.map(normalizeText));
-  const managerExceptions = new Map();
+  const managerExceptions = new Set();
   for (const rule of config.managerExceptions) {
-    const organization = organizationKey(rule.organization);
-    if (!managerExceptions.has(organization)) managerExceptions.set(organization, new Set());
-    managerExceptions.get(organization).add(personKey(rule.manager));
+    const manager = typeof rule === 'string' ? rule : rule?.manager;
+    if (manager) managerExceptions.add(personKey(manager));
   }
-  const asaExceptions = new Map();
+  const asaExceptions = new Set();
   for (const rule of config.asaExceptions ?? []) {
-    const organization = organizationKey(rule.organization);
-    if (!asaExceptions.has(organization)) asaExceptions.set(organization, new Set());
-    asaExceptions.get(organization).add(personKey(rule.asa));
+    const asa = typeof rule === 'string' ? rule : rule?.asa;
+    if (asa) asaExceptions.add(personKey(asa));
   }
 
   return applications.filter((app) => {
@@ -44,10 +42,9 @@ export function filterSupportedApplications(applications, config) {
     if (!included.has(organization) || !name || appExceptions.has(name)) return false;
     const allowedNames = restricted.get(organization);
     if (allowedNames && !allowedNames.has(name)) return false;
-    const excludedManagers = managerExceptions.get(organization);
-    if (excludedManagers?.has(personKey(app.Application_Manager))) return false;
-    const excludedAsas = asaExceptions.get(organization);
-    if (excludedAsas?.has(personKey(app.Application_Security_Administrator))) return false;
+    if (managerExceptions.has(personKey(app.Application_Manager))) return false;
+    const asa = app.Application_Security_Administrator;
+    if (asaExceptions.has(personKey(asa))) return false;
     return true;
   });
 }
@@ -60,12 +57,26 @@ export function evaluateDashboard(data, config, now = new Date()) {
     return source ? [{ ...source, ...row, _support: source }] : [];
   });
 
-  const systemRows = supportedApps.map((row) => standardize(row, isCompliant(row.System_Criticality_Assessment_Current), []));
+  const systemPopulation = config.excludeBlankAsaFromScmp
+    ? supportedApps.filter((row) => normalizeText(row.Application_Security_Administrator))
+    : supportedApps;
+  const systemRows = systemPopulation.map((row) => standardize(row, isCompliant(row.System_Criticality_Assessment_Current), []));
   const riskRows = joinSupported(data.riskDetails ?? [], 'Application').map((row) => standardize(row, isCompliant(row.Risk_Prolifer_Current), []));
   const accessRows = joinSupported(data.accessDetails ?? [], 'Application').map((row) => standardize(row, isCompliant(row.ACP_Reviewed), []));
-  const nistRows = joinSupported(data.nistDetails ?? [], 'Asset_Name')
-    .filter((row) => normalizeText(row.Has_CUI) === 'true')
-    .map((row) => {
+  const nistByName = new Map((data.nistDetails ?? []).map((row) => [normalizeText(row.Asset_Name), row]));
+  const nistRows = supportedApps.map((application) => {
+    const detail = nistByName.get(normalizeText(application.Application));
+    const row = detail ? { ...application, ...detail, _support: application } : { ...application, Asset_Name: application.Application, _support: application };
+    if (normalizeText(row.Has_CUI) !== 'true') {
+      return standardize({
+        ...row,
+        _nistPopulationStatus: detail ? 'Supported non-CUI application' : 'Supported application without NIST detail',
+        _sowStatus: 'Compliant',
+        _sowOverride: false,
+        _sowBasis: 'Included in the supported-application denominator; not added to the CUI non-compliant population',
+        NIST_Next_Due_Date: '',
+      }, true, []);
+    }
       const completed = parseDate(row.Nist_Assessment_Completion_Date);
       const nextDue = completed ? addCalendarYear(completed) : null;
       const current = Boolean(nextDue && endOfDay(nextDue) >= now);
@@ -79,18 +90,19 @@ export function evaluateDashboard(data, config, now = new Date()) {
       if (!sourceCompliant && !sowOverride) reasons.push('NIST assessment or POA&M is non-compliant');
       return standardize({
         ...row,
+        _nistPopulationStatus: 'CUI application',
         NIST_Next_Due_Date: nextDue ? formatDate(nextDue) : '',
         _sowStatus: compliant ? 'Compliant' : 'Non-Compliant',
         _sowOverride: sowOverride,
         _sowBasis: sowOverride ? `${findings} finding${findings === 1 ? '' : 's'} with assessment due tomorrow or later` : sourceCompliant ? 'Source status is compliant and assessment is current' : '',
       }, compliant, reasons);
-    });
+  });
   const recoveryRows = joinSupported(data.recoveryDetails ?? [], 'Application_Name').map((row) => evaluateRecovery(row, now));
 
   const metricSpecs = [
-    ['system', 'System Criticality', systemRows, data.systemRollups, 'Current annual assessment'],
-    ['nist', 'NIST 800-171 CUI', nistRows, data.nistRollups, 'CUI applications only; due one year after completion'],
-    ['recovery', 'Recovery Plan', recoveryRows, data.recoveryRollups, 'Plan approval, currency, and required validation dates'],
+    ['system', 'System Criticality', systemRows, data.systemRollups, config.excludeBlankAsaFromScmp ? 'Current annual assessment; blank ASA applications excluded from SCMP percentage' : 'Current annual assessment'],
+    ['nist', 'NIST 800-171 CUI', nistRows, data.nistRollups, 'All supported applications; non-compliance remains based on CUI assessments'],
+    ['recovery', 'Recovery Plan', recoveryRows, data.recoveryRollups, 'Compliance percentage uses Plan Current status'],
     ['risk', 'Risk Profiler', riskRows, data.riskRollups, 'Current annual Risk Profiler assessment'],
     ['access', 'Access Control Policy', accessRows, data.accessRollups, 'Current application ACP review'],
   ];
@@ -106,6 +118,10 @@ export function collectNonCompliantRecords(metrics) {
   })));
 }
 
+export function getBlankAsaApplications(applications) {
+  return applications.filter((row) => !normalizeText(row.Application_Security_Administrator));
+}
+
 function evaluateRecovery(row, now) {
   const level = Number(String(row.Recovery_Level ?? '').match(/RL\s*(\d)/i)?.[1] ?? 0);
   const complete = isCompliant(row.Plans_Complete);
@@ -117,13 +133,14 @@ function evaluateRecovery(row, now) {
     : level === 4 || level === 5 ? [['Orientation_Date', 180], ['Functional_Date', 365]]
     : [];
   const stale = requirements.filter(([field, days]) => !dateWithin(row[field], days, now)).map(([field]) => readableField(field));
-  const reasons = [];
-  if (!complete) reasons.push('Recovery plan is incomplete');
-  if (complete && !current) reasons.push('Approved plan has incomplete validations');
-  if (!apiValidated) reasons.push('Plan is not tested and validated');
-  if (stale.length) reasons.push(`Required validation overdue: ${stale.join(', ')}`);
+  const attention = [];
+  if (!complete) attention.push('Recovery plan is incomplete');
+  if (complete && !current) attention.push('Approved plan has incomplete validations');
+  if (!apiValidated) attention.push('Plan is not tested and validated');
+  if (stale.length) attention.push(`Required validation overdue: ${stale.join(', ')}`);
+  const reasons = current ? [] : attention;
   const functionalPending = (level === 4 || level === 5) && complete && current && !dateWithin(row.Functional_Date, 365, now);
-  const compliant = complete && current && apiValidated && stale.length === 0;
+  const compliant = current;
   return standardize({
     ...row,
     _planComplete: complete,
@@ -131,6 +148,7 @@ function evaluateRecovery(row, now) {
     _validationIncomplete: complete && !current,
     _functionalPending: functionalPending,
     _recoveryLevelNumber: level,
+    _recoveryAttention: attention,
   }, compliant, reasons);
 }
 

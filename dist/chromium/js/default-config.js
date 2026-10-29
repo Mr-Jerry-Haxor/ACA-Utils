@@ -60,6 +60,7 @@ export const DEFAULT_CONFIG = Object.freeze({
     { organization: 'IT Global', manager: 'Faulkner, Michael E' }
   ],
   asaExceptions: [],
+  excludeBlankAsaFromScmp: false,
   applicationExceptions: [
     'eGSEP',
     'rGSEP',

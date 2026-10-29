@@ -1,8 +1,8 @@
 import { fetchAllComplianceData, fetchApplicationInventory } from './api.js';
 import { cloneDefaultConfig } from './default-config.js';
 import { loadConfig, saveConfig } from './config-store.js';
-import { collectNonCompliantRecords, evaluateDashboard, normalizeText, organizationKey, organizationLabel, personKey } from './logic.js';
-import { copyRows, displayValue, exportExcel, exportJson } from './export.js';
+import { collectNonCompliantRecords, evaluateDashboard, getBlankAsaApplications, normalizeText, organizationKey, organizationLabel, personKey } from './logic.js';
+import { displayValue, exportExcel, exportJson } from './export.js';
 import { applyTableState, nextSort, uniqueColumnValues } from './table-state.js';
 import { findInventoryMatch, searchInventoryValues, uniqueInventoryValues } from './inventory-options.js';
 
@@ -21,8 +21,8 @@ const COMMON_COLUMNS = [
 
 const METRIC_COLUMNS = {
   system: [...COMMON_COLUMNS, { key: '_status', label: 'Status' }, { key: 'System_Criticality_Due_Date', label: 'Due Date' }, { key: 'Recovery_Level', label: 'Recovery Level' }, { key: 'AEC_Rating', label: 'AEC Rating' }],
-  nist: [...COMMON_COLUMNS, { key: 'Overall_NIST_Compliance', label: 'Existing Status' }, { key: '_sowStatus', label: 'Compliant as per SOW' }, { key: 'Has_CUI', label: 'Has CUI' }, { key: 'Nist_Assessment_Completion_Date', label: 'Completed Date' }, { key: 'NIST_Next_Due_Date', label: 'Calculated Next Due' }, { key: 'Open_Findings', label: 'Number of Findings' }, { key: '_sowBasis', label: 'SOW Basis' }, reasonColumn()],
-  recovery: [COMMON_COLUMNS[0], { key: 'Plan_Name', label: 'Plan Name' }, ...COMMON_COLUMNS.slice(1), { key: '_status', label: 'Calculated Status' }, { key: 'Recovery_Level', label: 'Recovery Level' }, { key: 'Plans_Complete', label: 'Plan Complete' }, { key: 'Plans_Current', label: 'Plan Current' }, { key: 'Plans_Tested_And_Validated', label: 'Tested and Validated' }, { key: 'Overall_DueDate', label: 'Overall Due Date' }, { key: 'Orientation_Date', label: 'Orientation' }, { key: 'Table_Top_Date', label: 'Tabletop' }, { key: 'Drill_Date', label: 'Drill' }, { key: 'Functional_Date', label: 'Functional Exercise' }, reasonColumn()],
+  nist: [...COMMON_COLUMNS, { key: '_nistPopulationStatus', label: 'NIST Population' }, { key: 'Overall_NIST_Compliance', label: 'Existing Status' }, { key: '_sowStatus', label: 'Compliant as per SOW' }, { key: 'Has_CUI', label: 'Has CUI' }, { key: 'Nist_Assessment_Completion_Date', label: 'Completed Date' }, { key: 'NIST_Next_Due_Date', label: 'Calculated Next Due' }, { key: 'Open_Findings', label: 'Number of Findings' }, { key: '_sowBasis', label: 'SOW Basis' }, reasonColumn()],
+  recovery: [COMMON_COLUMNS[0], { key: 'Plan_Name', label: 'Plan Name' }, ...COMMON_COLUMNS.slice(1), { key: '_status', label: 'Calculated Status' }, { key: 'Recovery_Level', label: 'Recovery Level' }, { key: 'Plans_Complete', label: 'Plan Complete' }, { key: 'Plans_Current', label: 'Plan Current' }, { key: 'Plans_Tested_And_Validated', label: 'Tested and Validated' }, { key: 'Overall_DueDate', label: 'Overall Due Date' }, { key: 'Orientation_Date', label: 'Orientation' }, { key: 'Table_Top_Date', label: 'Tabletop' }, { key: 'Drill_Date', label: 'Drill' }, { key: 'Functional_Date', label: 'Functional Exercise' }, { key: '_recoveryAttention', label: 'Recovery Attention' }, reasonColumn()],
   risk: [...COMMON_COLUMNS, { key: '_status', label: 'Status' }, { key: 'Risk_Prolifer_Current', label: 'Source Status' }, { key: 'Risk_Prolifer_Due_Date', label: 'Due Date' }, { key: 'AEC_rating', label: 'AEC Rating' }],
   access: [...COMMON_COLUMNS, { key: '_status', label: 'Status' }, { key: 'ACP_Reviewed', label: 'ACP Reviewed' }, { key: 'ACP_Review_Due_Date', label: 'Review Due Date' }, { key: 'Recovery_Level', label: 'Recovery Level' }],
 };
@@ -68,6 +68,7 @@ const OVERALL_NONCOMPLIANT_COLUMNS = [
 
 document.getElementById('close-button').addEventListener('click', () => parent.postMessage({ source: 'aca-dashboard', type: 'close' }, '*'));
 document.getElementById('refresh-button').addEventListener('click', refreshData);
+document.getElementById('new-applications-button').addEventListener('click', openNewApplications);
 document.getElementById('supported-apps-button').addEventListener('click', openSupportedApplications);
 document.getElementById('config-button').addEventListener('click', openConfiguration);
 document.getElementById('modal-close').addEventListener('click', closeModal);
@@ -220,8 +221,22 @@ function openSupportedApplications() {
   });
 }
 
+function openNewApplications() {
+  if (!state.dashboard) return;
+  const rows = getBlankAsaApplications(state.dashboard.supportedApps);
+  openTableModal({
+    kicker: 'Supported applications',
+    title: 'New Applications',
+    subtitle: `${formatNumber(rows.length)} supported applications currently have a blank ASA.`,
+    rows,
+    columns: [...COMMON_COLUMNS, { key: 'Application_Type', label: 'Application Type' }, { key: 'System_Criticality_Assessment_Current', label: 'System Criticality Status' }, { key: 'System_Criticality_Due_Date', label: 'System Criticality Due' }, { key: 'Recovery_Level', label: 'Recovery Level' }, { key: 'AEC_Rating', label: 'AEC Rating' }],
+    filename: 'new-applications-blank-asa',
+  });
+}
+
 function openTableModal({ kicker, title, subtitle, rows, columns, filename }) {
   openModal(kicker, title, subtitle);
+  refs['modal-content'].classList.add('is-table-view');
   const pageSize = 25;
   let page = 1;
   let search = '';
@@ -229,9 +244,8 @@ function openTableModal({ kicker, title, subtitle, rows, columns, filename }) {
   const columnSelections = {};
   let sort = null;
   const input = el('input', { class: 'search-input', type: 'search', placeholder: 'Search all columns', 'aria-label': 'Search table' });
-  const copy = el('button', { class: 'button button-secondary', type: 'button' }, 'Copy data');
   const exportButton = el('button', { class: 'button button-primary', type: 'button' }, 'Export to Excel');
-  refs['modal-toolbar'].append(el('div', { class: 'toolbar-group' }, input), el('div', { class: 'toolbar-group' }, copy, exportButton));
+  refs['modal-toolbar'].append(el('div', { class: 'toolbar-group' }, input), el('div', { class: 'toolbar-group' }, exportButton));
 
   const processedRows = () => applyTableState(rows, columns, { globalSearch: search, columnSearches, columnSelections, sort });
   const render = (focusColumnIndex = null, caretPosition = null) => {
@@ -279,9 +293,6 @@ function openTableModal({ kicker, title, subtitle, rows, columns, filename }) {
     });
   };
   input.addEventListener('input', () => { search = normalizeText(input.value); page = 1; render(); });
-  copy.addEventListener('click', async () => {
-    try { await copyRows(processedRows(), columns); toast(`Copied ${formatNumber(processedRows().length)} records.`); } catch { toast('Clipboard access was unavailable.'); }
-  });
   exportButton.addEventListener('click', () => exportExcel(processedRows(), columns, filename));
   render();
 }
@@ -392,24 +403,13 @@ async function openConfiguration() {
 
 function renderConfiguration(inventory) {
   refs['modal-subtitle'].textContent = 'Search the current application inventory and select suggested values. Only conditional rules are stored in IndexedDB.';
-  refs['modal-toolbar'].replaceChildren();
+  refs['modal-toolbar'].replaceChildren(el('div', { class: 'config-update-time' }, `Last configuration update: ${formatConfigurationUpdatedAt(state.config.updatedAt)}`));
   refs['modal-footer'].replaceChildren();
   const organizations = [...new Set(inventory.map((row) => organizationLabel(row.Maintaining_Organization)).filter(Boolean))].sort(localeSort);
   const besApps = inventory.filter((row) => organizationKey(row.Maintaining_Organization) === organizationKey('Boeing Enterprise Security')).map((row) => String(row.Application ?? '').trim()).filter(Boolean).sort(localeSort);
   const applicationNames = uniqueInventoryValues(inventory.map((row) => row.Application), normalizeText);
-  const managersByOrganization = new Map();
-  const asasByOrganization = new Map();
-  for (const row of inventory) {
-    const organization = organizationKey(row.Maintaining_Organization);
-    if (!managersByOrganization.has(organization)) managersByOrganization.set(organization, new Map());
-    if (!asasByOrganization.has(organization)) asasByOrganization.set(organization, new Map());
-    const manager = String(row.Application_Manager ?? '').trim();
-    if (manager) managersByOrganization.get(organization).set(personKey(manager), manager);
-    const asa = String(row.Application_Security_Administrator ?? '').trim();
-    if (asa) asasByOrganization.get(organization).set(personKey(asa), asa);
-  }
-  for (const [organization, managers] of managersByOrganization) managersByOrganization.set(organization, [...managers.values()].sort(localeSort));
-  for (const [organization, asas] of asasByOrganization) asasByOrganization.set(organization, [...asas.values()].sort(localeSort));
+  const allManagers = uniqueInventoryValues(inventory.map((row) => row.Application_Manager), personKey);
+  const allAsas = uniqueInventoryValues(inventory.map((row) => row.Application_Security_Administrator), personKey);
   const selectedOrganizations = new Set(state.config.includedOrganizations.map(organizationKey));
   const selectedBesApps = new Set((state.config.restrictedOrganizations['Boeing Enterprise Security'] ?? []).map(normalizeText));
 
@@ -420,16 +420,18 @@ function renderConfiguration(inventory) {
   for (const app of besApps) appList.append(checkRow(app, selectedBesApps.has(normalizeText(app)), 'bes-app'));
   const besAppSearch = checkListSearch(appList, 'Search Boeing Enterprise Security applications');
   const managerList = el('div', { class: 'rule-list', id: 'manager-rules' });
-  for (const rule of state.config.managerExceptions) managerList.append(managerRuleRow(rule, organizations, managersByOrganization));
+  for (const manager of state.config.managerExceptions) managerList.append(managerRuleRow(manager, allManagers));
   const asaList = el('div', { class: 'rule-list', id: 'asa-rules' });
-  for (const rule of state.config.asaExceptions ?? []) asaList.append(asaRuleRow(rule, organizations, asasByOrganization));
+  for (const asa of state.config.asaExceptions ?? []) asaList.append(asaRuleRow(asa, allAsas));
+  const excludeBlankAsaFromScmp = el('input', { type: 'checkbox', checked: Boolean(state.config.excludeBlankAsaFromScmp) });
+  const blankAsaOption = el('label', { class: 'check-row blank-asa-option' }, excludeBlankAsaFromScmp, el('span', {}, 'Exclude blank ASA applications from the SCMP compliance percentage'));
   const appExceptionList = el('div', { class: 'rule-list', id: 'application-rules' });
   for (const name of state.config.applicationExceptions) appExceptionList.append(appExceptionRow(name, applicationNames));
 
   const addManager = el('button', { class: 'button button-secondary', type: 'button' }, 'Add manager exception');
-  addManager.addEventListener('click', () => managerList.append(managerRuleRow({ organization: organizations[0], manager: '' }, organizations, managersByOrganization)));
+  addManager.addEventListener('click', () => managerList.append(managerRuleRow('', allManagers)));
   const addAsa = el('button', { class: 'button button-secondary', type: 'button' }, 'Add ASA exception');
-  addAsa.addEventListener('click', () => asaList.append(asaRuleRow({ organization: organizations[0], asa: '' }, organizations, asasByOrganization)));
+  addAsa.addEventListener('click', () => asaList.append(asaRuleRow('', allAsas)));
   const addApp = el('button', { class: 'button button-secondary', type: 'button' }, 'Add application exception');
   addApp.addEventListener('click', () => appExceptionList.append(appExceptionRow('', applicationNames)));
 
@@ -439,8 +441,8 @@ function renderConfiguration(inventory) {
       el('section', { class: 'config-section' }, el('h3', {}, 'Boeing Enterprise Security applications'), el('p', { class: 'config-note' }, 'This MO is restricted to the selected applications.'), besAppSearch, appList),
     ),
     el('div', {},
-      el('section', { class: 'config-section' }, el('h3', {}, 'Application manager exceptions'), el('p', { class: 'config-note' }, 'Exclude applications only when both the MO and normalized manager name match.'), managerList, addManager),
-      el('section', { class: 'config-section' }, el('h3', {}, 'ASA exceptions'), el('p', { class: 'config-note' }, 'Exclude applications only when both the MO and normalized ASA name match. This list is initially empty.'), asaList, addAsa),
+      el('section', { class: 'config-section' }, el('h3', {}, 'Application manager exceptions'), el('p', { class: 'config-note' }, 'Select a manager to exclude all of that manager’s applications, regardless of maintenance organization.'), managerList, addManager),
+      el('section', { class: 'config-section' }, el('h3', {}, 'ASA exceptions'), el('p', { class: 'config-note' }, 'Select an ASA to exclude all of that ASA’s applications, regardless of maintenance organization.'), blankAsaOption, asaList, addAsa),
       el('section', { class: 'config-section' }, el('h3', {}, 'Application exceptions'), el('p', { class: 'config-note' }, 'Exclude these application names regardless of MO.'), appExceptionList, addApp),
     ),
   );
@@ -462,35 +464,29 @@ function renderConfiguration(inventory) {
   });
   saveButton.addEventListener('click', async () => {
     try {
-      let ignoredRules = 0;
       const includedOrganizations = [...orgList.querySelectorAll('input:checked')].map((input) => input.value);
       const restrictedOrganizations = { 'Boeing Enterprise Security': [...appList.querySelectorAll('input:checked')].map((input) => input.value) };
       const managerExceptions = [...managerList.querySelectorAll('.rule-row')].flatMap((row) => {
-        const organization = row.querySelector('select').value;
         const input = row.querySelector('[data-inventory-picker="manager"]');
         if (!input.value.trim()) return [];
         const manager = input.getInventoryValue();
-        if (!manager) { ignoredRules += 1; return []; }
-        return [{ organization, manager }];
+        return [manager ?? input.value.trim()];
       });
       const asaExceptions = [...asaList.querySelectorAll('.rule-row')].flatMap((row) => {
-        const organization = row.querySelector('select').value;
         const input = row.querySelector('[data-inventory-picker="asa"]');
         if (!input.value.trim()) return [];
         const asa = input.getInventoryValue();
-        if (!asa) { ignoredRules += 1; return []; }
-        return [{ organization, asa }];
+        return [asa ?? input.value.trim()];
       });
       const applicationExceptions = [...appExceptionList.querySelectorAll('[data-inventory-picker="application"]')].flatMap((input) => {
         if (!input.value.trim()) return [];
         const application = input.getInventoryValue();
-        if (!application) { ignoredRules += 1; return []; }
-        return [application];
+        return [application ?? input.value.trim()];
       });
-      state.config = await saveConfig({ schemaVersion: 1, bemsId: '1600103', includedOrganizations, restrictedOrganizations, managerExceptions, asaExceptions, applicationExceptions });
+      state.config = await saveConfig({ schemaVersion: 1, bemsId: '1600103', includedOrganizations, restrictedOrganizations, managerExceptions, asaExceptions, excludeBlankAsaFromScmp: excludeBlankAsaFromScmp.checked, applicationExceptions });
       await applyConfig();
       closeModal();
-      toast(ignoredRules ? `Configuration saved. ${ignoredRules} unmatched exception ${ignoredRules === 1 ? 'entry was' : 'entries were'} ignored.` : 'Supported application configuration saved.');
+      toast('Supported application configuration saved.');
     } catch (error) { toast(`Configuration was not saved: ${error.message}`); }
   });
   refs['modal-footer'].append(el('div', { class: 'toolbar-group' }, importInput, importButton, exportButton, resetButton), saveButton);
@@ -504,34 +500,28 @@ async function applyConfig() {
   }
 }
 
-function managerRuleRow(rule, organizations, managersByOrganization) {
-  const select = el('select', { class: 'select-input', 'aria-label': 'Maintenance organization' });
-  for (const organization of organizations) select.append(el('option', { value: organization, selected: organizationKey(organization) === organizationKey(rule.organization) }, organization));
+function managerRuleRow(manager, allManagers) {
   const picker = inventoryPicker({
-    value: rule.manager,
+    value: typeof manager === 'string' ? manager : manager?.manager,
     placeholder: 'Type to search managers',
     ariaLabel: 'Application manager',
     pickerType: 'manager',
-    getOptions: () => managersByOrganization.get(organizationKey(select.value)) ?? [],
+    getOptions: () => allManagers,
     matchKey: personKey,
   });
-  select.addEventListener('change', () => picker.input.refreshInventoryPicker());
-  return removableRuleRow([select, picker.element]);
+  return removableRuleRow([picker.element], 'app-only');
 }
 
-function asaRuleRow(rule, organizations, asasByOrganization) {
-  const select = el('select', { class: 'select-input', 'aria-label': 'Maintenance organization' });
-  for (const organization of organizations) select.append(el('option', { value: organization, selected: organizationKey(organization) === organizationKey(rule.organization) }, organization));
+function asaRuleRow(asa, allAsas) {
   const picker = inventoryPicker({
-    value: rule.asa,
+    value: typeof asa === 'string' ? asa : asa?.asa,
     placeholder: 'Type to search ASAs',
     ariaLabel: 'Application Security Administrator',
     pickerType: 'asa',
-    getOptions: () => asasByOrganization.get(organizationKey(select.value)) ?? [],
+    getOptions: () => allAsas,
     matchKey: personKey,
   });
-  select.addEventListener('change', () => picker.input.refreshInventoryPicker());
-  return removableRuleRow([select, picker.element]);
+  return removableRuleRow([picker.element], 'app-only');
 }
 
 function appExceptionRow(name, applicationNames) {
@@ -583,7 +573,7 @@ function inventoryPicker({ value, placeholder, ariaLabel, pickerType, getOptions
       input.setAttribute('aria-invalid', 'false');
     } else {
       status.className = 'inventory-match-status is-warning';
-      status.textContent = 'Not found in the current inventory; this exception will be ignored when saved.';
+      status.textContent = 'Not found in the current inventory; this exception will be kept as entered when saved.';
       input.classList.add('inventory-warning');
       input.setAttribute('aria-invalid', 'false');
     }
@@ -709,6 +699,7 @@ function openModal(kicker, title, subtitle) {
   refs['modal-title'].textContent = title;
   refs['modal-subtitle'].textContent = subtitle;
   refs['modal-toolbar'].replaceChildren();
+  refs['modal-content'].classList.remove('is-table-view');
   refs['modal-content'].replaceChildren();
   refs['modal-footer'].replaceChildren();
   refs['modal-backdrop'].hidden = false;
@@ -767,6 +758,13 @@ function metricDueDate(row) {
   return '';
 }
 function formatNumber(value) { return new Intl.NumberFormat('en-IN').format(value); }
+function formatConfigurationUpdatedAt(value) {
+  if (!value || Number.isNaN(Date.parse(value))) return 'Not yet saved';
+  return new Intl.DateTimeFormat('en-IN', {
+    timeZone: 'Asia/Kolkata', year: 'numeric', month: 'short', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true,
+  }).format(new Date(value)) + ' IST';
+}
 function localeSort(a, b) { return a.localeCompare(b, 'en', { sensitivity: 'base' }); }
 
 function el(tag, attributes = {}, ...children) {

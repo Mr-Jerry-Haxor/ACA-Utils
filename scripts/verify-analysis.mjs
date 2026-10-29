@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import { DEFAULT_CONFIG } from '../src/js/default-config.js';
-import { collectNonCompliantRecords, evaluateDashboard } from '../src/js/logic.js';
+import { collectNonCompliantRecords, evaluateDashboard, getBlankAsaApplications } from '../src/js/logic.js';
 
 const har = JSON.parse(fs.readFileSync('research data/scorecard-ui.tas-ewd.apps.boeing.com.har', 'utf8'));
 const entries = har?.log?.entries ?? [];
@@ -20,6 +20,9 @@ for (const [key, endpoint] of Object.entries(endpoints)) {
   data[key] = JSON.parse(entry.response.content.text);
 }
 const dashboard = evaluateDashboard(data, structuredClone(DEFAULT_CONFIG), new Date('2026-10-29T12:00:00+05:30'));
+const scmpExclusionConfig = structuredClone(DEFAULT_CONFIG);
+scmpExclusionConfig.excludeBlankAsaFromScmp = true;
+const dashboardWithBlankAsaExcludedFromScmp = evaluateDashboard(data, scmpExclusionConfig, new Date('2026-10-29T12:00:00+05:30'));
 if (!dashboard.supportedApps.length) {
   const counts = new Map();
   for (const row of data.systemDetails) counts.set(row.Maintaining_Organization, (counts.get(row.Maintaining_Organization) ?? 0) + 1);
@@ -37,4 +40,6 @@ console.log(JSON.stringify({
   recoveryFunctionalPending: dashboard.metrics.find((metric) => metric.id === 'recovery').rows.filter((row) => row._functionalPending).length,
   nistSowOverrides: dashboard.metrics.find((metric) => metric.id === 'nist').rows.filter((row) => row._sowOverride).length,
   overallNonCompliantRecords: collectNonCompliantRecords(dashboard.metrics).length,
+  blankAsaSupportedApplications: getBlankAsaApplications(dashboard.supportedApps).length,
+  scmpTotalWithBlankAsaExcluded: dashboardWithBlankAsaExcludedFromScmp.metrics.find((metric) => metric.id === 'system').total,
 }, null, 2));
