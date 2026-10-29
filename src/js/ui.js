@@ -3,8 +3,10 @@ import { cloneDefaultConfig } from './default-config.js';
 import { loadConfig, saveConfig } from './config-store.js';
 import { evaluateDashboard, normalizeText, organizationKey, organizationLabel } from './logic.js';
 import { copyRows, displayValue, exportExcel, exportJson } from './export.js';
+import { applyTableState, nextSort, uniqueColumnValues } from './table-state.js';
 
 const state = { config: null, raw: null, dashboard: null, controller: null };
+let columnFilterOutsideHandler = null;
 const refs = Object.fromEntries(['status-line','summary-strip','metric-grid','dr-alerts','modal-backdrop','modal','modal-kicker','modal-title','modal-subtitle','modal-toolbar','modal-content','modal-footer','toast'].map((id) => [id, document.getElementById(id)]));
 
 const COMMON_COLUMNS = [
@@ -17,8 +19,8 @@ const COMMON_COLUMNS = [
 
 const METRIC_COLUMNS = {
   system: [...COMMON_COLUMNS, { key: '_status', label: 'Status' }, { key: 'System_Criticality_Due_Date', label: 'Due Date' }, { key: 'Recovery_Level', label: 'Recovery Level' }, { key: 'AEC_Rating', label: 'AEC Rating' }],
-  nist: [...COMMON_COLUMNS, { key: '_status', label: 'Status' }, { key: 'Has_CUI', label: 'Has CUI' }, { key: 'Overall_NIST_Compliance', label: 'Source Compliance' }, { key: 'Nist_Assessment_Completion_Date', label: 'Completed Date' }, { key: 'NIST_Next_Due_Date', label: 'Calculated Next Due' }, { key: 'Open_Findings', label: 'Open Findings' }, reasonColumn()],
-  recovery: [...COMMON_COLUMNS, { key: '_status', label: 'Calculated Status' }, { key: 'Recovery_Level', label: 'Recovery Level' }, { key: 'Plans_Complete', label: 'Plan Complete' }, { key: 'Plans_Current', label: 'Plan Current' }, { key: 'Plans_Tested_And_Validated', label: 'Tested and Validated' }, { key: 'Overall_DueDate', label: 'Overall Due Date' }, { key: 'Orientation_Date', label: 'Orientation' }, { key: 'Table_Top_Date', label: 'Tabletop' }, { key: 'Drill_Date', label: 'Drill' }, { key: 'Functional_Date', label: 'Functional Exercise' }, reasonColumn()],
+  nist: [...COMMON_COLUMNS, { key: 'Overall_NIST_Compliance', label: 'Existing Status' }, { key: '_sowStatus', label: 'Compliant as per SOW' }, { key: 'Has_CUI', label: 'Has CUI' }, { key: 'Nist_Assessment_Completion_Date', label: 'Completed Date' }, { key: 'NIST_Next_Due_Date', label: 'Calculated Next Due' }, { key: 'Open_Findings', label: 'Number of Findings' }, { key: '_sowBasis', label: 'SOW Basis' }, reasonColumn()],
+  recovery: [COMMON_COLUMNS[0], { key: 'Plan_Name', label: 'Plan Name' }, ...COMMON_COLUMNS.slice(1), { key: '_status', label: 'Calculated Status' }, { key: 'Recovery_Level', label: 'Recovery Level' }, { key: 'Plans_Complete', label: 'Plan Complete' }, { key: 'Plans_Current', label: 'Plan Current' }, { key: 'Plans_Tested_And_Validated', label: 'Tested and Validated' }, { key: 'Overall_DueDate', label: 'Overall Due Date' }, { key: 'Orientation_Date', label: 'Orientation' }, { key: 'Table_Top_Date', label: 'Tabletop' }, { key: 'Drill_Date', label: 'Drill' }, { key: 'Functional_Date', label: 'Functional Exercise' }, reasonColumn()],
   risk: [...COMMON_COLUMNS, { key: '_status', label: 'Status' }, { key: 'Risk_Prolifer_Current', label: 'Source Status' }, { key: 'Risk_Prolifer_Due_Date', label: 'Due Date' }, { key: 'AEC_rating', label: 'AEC Rating' }],
   access: [...COMMON_COLUMNS, { key: '_status', label: 'Status' }, { key: 'ACP_Reviewed', label: 'ACP Reviewed' }, { key: 'ACP_Review_Due_Date', label: 'Review Due Date' }, { key: 'Recovery_Level', label: 'Recovery Level' }],
 };
@@ -29,7 +31,12 @@ document.getElementById('supported-apps-button').addEventListener('click', openS
 document.getElementById('config-button').addEventListener('click', openConfiguration);
 document.getElementById('modal-close').addEventListener('click', closeModal);
 refs['modal-backdrop'].addEventListener('click', (event) => { if (event.target === refs['modal-backdrop']) closeModal(); });
-addEventListener('keydown', (event) => { if (event.key === 'Escape' && !refs['modal-backdrop'].hidden) closeModal(); });
+addEventListener('keydown', (event) => {
+  if (event.key !== 'Escape') return;
+  if (document.getElementById('column-value-filter-panel')) closeColumnValueFilter();
+  else if (!refs['modal-backdrop'].hidden) closeModal();
+});
+addEventListener('pointerdown', () => parent.postMessage({ source: 'aca-dashboard', type: 'interaction' }, '*'), { passive: true });
 
 initialize().catch(showFatal);
 
@@ -157,30 +164,147 @@ function openTableModal({ kicker, title, subtitle, rows, columns, filename }) {
   const pageSize = 25;
   let page = 1;
   let search = '';
+  const columnSearches = {};
+  const columnSelections = {};
+  let sort = null;
   const input = el('input', { class: 'search-input', type: 'search', placeholder: 'Search all columns', 'aria-label': 'Search table' });
   const copy = el('button', { class: 'button button-secondary', type: 'button' }, 'Copy data');
   const exportButton = el('button', { class: 'button button-primary', type: 'button' }, 'Export to Excel');
   refs['modal-toolbar'].append(el('div', { class: 'toolbar-group' }, input), el('div', { class: 'toolbar-group' }, copy, exportButton));
 
-  const filteredRows = () => !search ? rows : rows.filter((row) => columns.some((column) => normalizeText(displayValue(row, column)).includes(search)));
-  const render = () => {
-    const filtered = filteredRows();
+  const processedRows = () => applyTableState(rows, columns, { globalSearch: search, columnSearches, columnSelections, sort });
+  const render = (focusColumnIndex = null, caretPosition = null) => {
+    closeColumnValueFilter();
+    const filtered = processedRows();
     const maxPage = Math.max(1, Math.ceil(filtered.length / pageSize));
     page = Math.min(page, maxPage);
     const pageRows = filtered.slice((page - 1) * pageSize, page * pageSize);
-    refs['modal-content'].replaceChildren(renderTable(pageRows, columns));
+    refs['modal-content'].replaceChildren(renderTable(pageRows, columns, { sort, columnSearches, columnSelections }, {
+      onSort(columnIndex) {
+        sort = nextSort(sort, columnIndex);
+        page = 1;
+        render();
+      },
+      onColumnSearch(columnIndex, value, caret) {
+        columnSearches[columnIndex] = value;
+        page = 1;
+        render(columnIndex, caret);
+      },
+      onOpenColumnFilter(columnIndex, anchor) {
+        openColumnValueFilter({
+          rows,
+          column: columns[columnIndex],
+          columnIndex,
+          anchor,
+          currentSelection: Object.hasOwn(columnSelections, columnIndex) ? columnSelections[columnIndex] : null,
+          onApply(selection) {
+            if (selection === null) delete columnSelections[columnIndex];
+            else columnSelections[columnIndex] = selection;
+            page = 1;
+            render();
+          },
+        });
+      },
+    }));
     const previous = el('button', { class: 'button button-secondary', type: 'button', disabled: page <= 1 }, 'Previous');
     const next = el('button', { class: 'button button-secondary', type: 'button', disabled: page >= maxPage }, 'Next');
     previous.addEventListener('click', () => { page -= 1; render(); });
     next.addEventListener('click', () => { page += 1; render(); });
     refs['modal-footer'].replaceChildren(el('span', {}, `${formatNumber(filtered.length)} records · Page ${page} of ${maxPage}`), el('div', { class: 'toolbar-group' }, previous, next));
+    if (focusColumnIndex !== null) queueMicrotask(() => {
+      const field = refs['modal-content'].querySelector(`[data-column-search="${focusColumnIndex}"]`);
+      field?.focus();
+      if (typeof field?.setSelectionRange === 'function') field.setSelectionRange(caretPosition, caretPosition);
+    });
   };
   input.addEventListener('input', () => { search = normalizeText(input.value); page = 1; render(); });
   copy.addEventListener('click', async () => {
-    try { await copyRows(filteredRows(), columns); toast(`Copied ${formatNumber(filteredRows().length)} records.`); } catch { toast('Clipboard access was unavailable.'); }
+    try { await copyRows(processedRows(), columns); toast(`Copied ${formatNumber(processedRows().length)} records.`); } catch { toast('Clipboard access was unavailable.'); }
   });
-  exportButton.addEventListener('click', () => exportExcel(filteredRows(), columns, filename));
+  exportButton.addEventListener('click', () => exportExcel(processedRows(), columns, filename));
   render();
+}
+
+function openColumnValueFilter({ rows, column, columnIndex, anchor, currentSelection, onApply }) {
+  closeColumnValueFilter();
+  const values = uniqueColumnValues(rows, column);
+  const allKeys = new Set(values.map((entry) => entry.key));
+  const selected = currentSelection ? new Set(currentSelection) : new Set(allKeys);
+  let search = '';
+  const searchInput = el('input', { class: 'value-filter-search', type: 'search', placeholder: 'Search values', 'aria-label': `Search values in ${column.label}` });
+  const list = el('div', { class: 'value-filter-list' });
+  const summary = el('span', { class: 'value-filter-summary' });
+  const limitNote = el('p', { class: 'value-filter-note' });
+  const panel = el('section', { id: 'column-value-filter-panel', class: 'column-value-filter-panel', role: 'dialog', 'aria-label': `Filter ${column.label}` },
+    el('header', { class: 'value-filter-header' }, el('strong', {}, `Filter ${column.label}`), el('button', { class: 'value-filter-close', type: 'button', 'aria-label': 'Close filter' }, '×')),
+    searchInput,
+    el('div', { class: 'value-filter-selection-actions' }),
+    summary,
+    list,
+    limitNote,
+    el('footer', { class: 'value-filter-footer' }),
+  );
+  const closeButton = panel.querySelector('.value-filter-close');
+  const selectionActions = panel.querySelector('.value-filter-selection-actions');
+  const footer = panel.querySelector('.value-filter-footer');
+  const matchingValues = () => values.filter((entry) => !search || normalizeText(entry.label).includes(search));
+  const renderValues = () => {
+    const matching = matchingValues();
+    const visibleValues = matching.slice(0, 250);
+    list.replaceChildren(...visibleValues.map((entry) => {
+      const checkbox = el('input', { type: 'checkbox', checked: selected.has(entry.key), value: entry.key });
+      checkbox.addEventListener('change', () => {
+        if (checkbox.checked) selected.add(entry.key);
+        else selected.delete(entry.key);
+        summary.textContent = `${formatNumber(selected.size)} of ${formatNumber(values.length)} values selected`;
+      });
+      const label = el('label', { class: 'value-filter-option' }, checkbox, el('span', {}, entry.label));
+      const only = el('button', { class: 'value-filter-only', type: 'button', title: `Show only ${entry.label}` }, 'Only');
+      only.addEventListener('click', () => { selected.clear(); selected.add(entry.key); renderValues(); });
+      return el('div', { class: 'value-filter-option-row' }, label, only);
+    }));
+    summary.textContent = `${formatNumber(selected.size)} of ${formatNumber(values.length)} values selected`;
+    limitNote.textContent = matching.length > visibleValues.length ? `Showing the first ${formatNumber(visibleValues.length)} matches. Refine the value search to see more.` : '';
+  };
+  const selectAll = el('button', { class: 'link-button', type: 'button' }, 'Select all');
+  const clearAll = el('button', { class: 'link-button', type: 'button' }, 'Clear all');
+  selectAll.addEventListener('click', () => { for (const entry of matchingValues()) selected.add(entry.key); renderValues(); });
+  clearAll.addEventListener('click', () => { for (const entry of matchingValues()) selected.delete(entry.key); renderValues(); });
+  selectionActions.append(selectAll, clearAll);
+  const clearFilter = el('button', { class: 'button button-quiet', type: 'button' }, 'Clear filter');
+  const cancel = el('button', { class: 'button button-secondary', type: 'button' }, 'Cancel');
+  const apply = el('button', { class: 'button button-primary', type: 'button' }, 'Apply');
+  clearFilter.addEventListener('click', () => { closeColumnValueFilter(); onApply(null); });
+  cancel.addEventListener('click', closeColumnValueFilter);
+  apply.addEventListener('click', () => {
+    const selection = selected.size === allKeys.size ? null : new Set(selected);
+    closeColumnValueFilter();
+    onApply(selection);
+  });
+  footer.append(clearFilter, cancel, apply);
+  closeButton.addEventListener('click', closeColumnValueFilter);
+  searchInput.addEventListener('input', () => { search = normalizeText(searchInput.value); renderValues(); });
+  document.body.append(panel);
+  const anchorRect = anchor.getBoundingClientRect();
+  const left = Math.max(8, Math.min(anchorRect.left, innerWidth - panel.offsetWidth - 8));
+  const top = Math.max(8, Math.min(anchorRect.bottom + 4, innerHeight - panel.offsetHeight - 8));
+  panel.style.left = `${Math.round(left)}px`;
+  panel.style.top = `${Math.round(top)}px`;
+  const outsideHandler = (event) => {
+    if (!panel.contains(event.target) && event.target !== anchor) closeColumnValueFilter();
+  };
+  columnFilterOutsideHandler = outsideHandler;
+  setTimeout(() => {
+    if (columnFilterOutsideHandler === outsideHandler) document.addEventListener('pointerdown', outsideHandler, true);
+  }, 0);
+  renderValues();
+  searchInput.focus();
+}
+
+function closeColumnValueFilter() {
+  document.getElementById('column-value-filter-panel')?.remove();
+  if (columnFilterOutsideHandler) document.removeEventListener('pointerdown', columnFilterOutsideHandler, true);
+  columnFilterOutsideHandler = null;
 }
 
 async function openConfiguration() {
@@ -290,19 +414,54 @@ function checkRow(value, checked, name) {
   return el('label', { class: 'check-row' }, input, el('span', {}, value));
 }
 
-function renderTable(rows, columns) {
-  if (!rows.length) return emptyState('No matching records.');
-  const head = el('thead', {}, el('tr', {}, ...columns.map((column) => el('th', { scope: 'col' }, column.label))));
+function renderTable(rows, columns, tableState, handlers) {
+  const headingRow = el('tr', { class: 'column-heading-row' }, ...columns.map((column, columnIndex) => {
+    const active = tableState.sort?.columnIndex === columnIndex ? tableState.sort.direction : null;
+    const sortButton = el('button', {
+      class: `sort-button${active ? ' is-sorted' : ''}`,
+      type: 'button',
+      title: `Sort by ${column.label}`,
+      'aria-label': `Sort by ${column.label}${active ? `, currently ${active === 'asc' ? 'ascending' : 'descending'}` : ''}`,
+    }, el('span', {}, column.label), el('span', { class: 'sort-indicator', 'aria-hidden': 'true' }, active === 'asc' ? '▲' : active === 'desc' ? '▼' : '↕'));
+    sortButton.addEventListener('click', () => handlers.onSort(columnIndex));
+    const filterActive = Object.hasOwn(tableState.columnSelections, columnIndex);
+    const filterButton = el('button', {
+      class: `value-filter-button${filterActive ? ' is-filtered' : ''}`,
+      type: 'button',
+      title: `Choose values for ${column.label}`,
+      'aria-label': `Filter ${column.label} by selected values${filterActive ? ', filter active' : ''}`,
+      'aria-pressed': filterActive,
+    }, '▼');
+    filterButton.addEventListener('click', (event) => {
+      event.stopPropagation();
+      handlers.onOpenColumnFilter(columnIndex, filterButton);
+    });
+    return el('th', { scope: 'col', 'aria-sort': active === 'asc' ? 'ascending' : active === 'desc' ? 'descending' : 'none' }, el('div', { class: 'column-header-control' }, sortButton, filterButton));
+  }));
+  const searchRow = el('tr', { class: 'column-filter-row' }, ...columns.map((column, columnIndex) => {
+    const input = el('input', {
+      class: 'column-search-input', type: 'search', value: tableState.columnSearches[columnIndex] ?? '',
+      placeholder: `Search ${column.label}`, 'aria-label': `Search ${column.label}`, 'data-column-search': columnIndex,
+    });
+    input.addEventListener('input', () => handlers.onColumnSearch(columnIndex, input.value, input.selectionStart));
+    return el('th', { scope: 'col' }, input);
+  }));
+  const head = el('thead', {}, headingRow, searchRow);
   const body = el('tbody');
   for (const row of rows) {
     const cells = columns.map((column) => {
       const value = displayValue(row, column);
-      if (column.key === '_status') return el('td', {}, el('span', { class: `status-pill ${row._compliant ? 'status-compliant' : 'status-noncompliant'}` }, value));
+      if (['_status', '_sowStatus', 'Overall_NIST_Compliance'].includes(column.key)) {
+        const compliant = normalizeText(value) === 'compliant';
+        return el('td', {}, el('span', { class: `status-pill ${compliant ? 'status-compliant' : 'status-noncompliant'}` }, value));
+      }
       return el('td', {}, value);
     });
     body.append(el('tr', {}, ...cells));
   }
-  return el('div', { class: 'table-wrap' }, el('table', {}, head, body));
+  const table = el('table', {}, head, body);
+  if (!rows.length) body.append(el('tr', {}, el('td', { class: 'table-empty-cell', colspan: columns.length }, 'No matching records.')));
+  return el('div', { class: 'table-wrap' }, table);
 }
 
 function openModal(kicker, title, subtitle) {
@@ -317,6 +476,7 @@ function openModal(kicker, title, subtitle) {
 }
 
 function closeModal() {
+  closeColumnValueFilter();
   refs['modal-backdrop'].hidden = true;
 }
 

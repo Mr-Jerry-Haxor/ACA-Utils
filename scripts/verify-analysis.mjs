@@ -35,4 +35,5 @@ console.log(JSON.stringify({
   metrics: dashboard.metrics.map((metric) => ({ id: metric.id, total: metric.total, compliant: metric.compliant, nonCompliant: metric.nonCompliant, percent: Number(metric.compliantPercent.toFixed(1)), extractIST: metric.extract.formatted })),
   recoveryValidationIncomplete: dashboard.metrics.find((metric) => metric.id === 'recovery').rows.filter((row) => row._validationIncomplete).length,
   recoveryFunctionalPending: dashboard.metrics.find((metric) => metric.id === 'recovery').rows.filter((row) => row._functionalPending).length,
+  nistSowOverrides: dashboard.metrics.find((metric) => metric.id === 'nist').rows.filter((row) => row._sowOverride).length,
 }, null, 2));

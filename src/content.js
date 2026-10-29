@@ -69,6 +69,25 @@
     wrapper.classList.toggle('aca-nav-compact', sidebar.getBoundingClientRect().width <= 90);
   }
 
+  function stopHostMenuEvent(event) {
+    event.stopPropagation();
+    if (event.type === 'dxclick') event.preventDefault();
+  }
+
+  function findMenuToggle() {
+    const candidate = document.querySelector('app-header .menu-button');
+    if (!candidate) return null;
+    return candidate.matches('button,.dx-button') ? candidate : candidate.querySelector('button,.dx-button') ?? candidate;
+  }
+
+  function collapseSidebarIfExpanded() {
+    const sidebar = findSidebar();
+    if (!sidebar || sidebar.getBoundingClientRect().width <= 90) return;
+    const toggle = findMenuToggle();
+    if (!toggle) return;
+    toggle.dispatchEvent(new CustomEvent('dxclick', { bubbles: true, cancelable: true }));
+  }
+
   function addNavigationItem() {
     if (document.getElementById(BUTTON_ID)) return true;
     const sidebar = findSidebar();
@@ -93,7 +112,12 @@
     label.className = 'aca-nav-label';
     label.textContent = 'ACA-utils';
     button.append(mark, label);
-    button.addEventListener('click', openDashboard);
+    for (const eventName of ['pointerdown', 'mousedown', 'touchstart', 'dxclick']) wrapper.addEventListener(eventName, stopHostMenuEvent);
+    button.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      openDashboard();
+    });
     wrapper.append(button);
     target.append(wrapper);
     updateCompactMode(wrapper, sidebar);
@@ -211,8 +235,15 @@
   }, { passive: true });
 
   addEventListener('message', (event) => {
-    if (event.source === frame?.contentWindow && event.data?.source === 'aca-dashboard' && event.data?.type === 'close') closeDashboard();
+    if (event.source !== frame?.contentWindow || event.data?.source !== 'aca-dashboard') return;
+    if (event.data.type === 'close') closeDashboard();
+    if (event.data.type === 'interaction') collapseSidebarIfExpanded();
   });
+
+  document.addEventListener('pointerdown', (event) => {
+    if (!dashboardOpen || event.target.closest('[data-aca-nav-item],app-header .menu-button')) return;
+    setTimeout(collapseSidebarIfExpanded, 0);
+  }, true);
 
   addNavigationItem();
   observer = new MutationObserver(() => {

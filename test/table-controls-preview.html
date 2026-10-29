@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ACA-utils table controls preview</title>
+  <link rel="stylesheet" href="../src/styles.css">
+</head>
+<body>
+  <div class="modal-backdrop">
+    <section class="modal" role="dialog" aria-modal="true">
+      <header class="modal-header"><div><p class="eyebrow">System Criticality</p><h2>All evaluated applications</h2><p class="modal-subtitle">2,224 records. Column search, filters, and sorting apply before pagination.</p></div><button class="icon-button">×</button></header>
+      <div class="modal-toolbar"><input class="search-input" type="search" placeholder="Search all columns"><div class="toolbar-group"><button class="button button-secondary">Copy data</button><button class="button button-primary">Export to Excel</button></div></div>
+      <div class="modal-content"><div class="table-wrap"><table>
+        <thead>
+          <tr class="column-heading-row">
+            <th><div class="column-header-control"><button class="sort-button is-sorted"><span>Application</span><span class="sort-indicator">▲</span></button><button class="value-filter-button">▼</button></div></th>
+            <th><div class="column-header-control"><button class="sort-button"><span>Application Manager</span><span class="sort-indicator">↕</span></button><button class="value-filter-button">▼</button></div></th>
+            <th><div class="column-header-control"><button class="sort-button"><span>Status</span><span class="sort-indicator">↕</span></button><button class="value-filter-button is-filtered">▼</button></div></th>
+            <th><div class="column-header-control"><button class="sort-button"><span>Due Date</span><span class="sort-indicator">↕</span></button><button class="value-filter-button">▼</button></div></th>
+          </tr>
+          <tr class="column-filter-row">
+            <th><input class="column-search-input" value="enterprise"></th>
+            <th><input class="column-search-input" placeholder="Search Application Manager"></th>
+            <th><input class="column-search-input" placeholder="Search Status"></th>
+            <th><input class="column-search-input" placeholder="Search Due Date"></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td>Enterprise Application A</td><td>Example Manager</td><td><span class="status-pill status-noncompliant">Non-Compliant</span></td><td>11/08/2026</td></tr>
+          <tr><td>Enterprise Application B</td><td>Example Manager</td><td><span class="status-pill status-noncompliant">Non-Compliant</span></td><td>12/15/2026</td></tr>
+        </tbody>
+      </table></div></div>
+      <footer class="modal-footer"><span>2 records · Page 1 of 1</span><div class="toolbar-group"><button class="button button-secondary" disabled>Previous</button><button class="button button-secondary" disabled>Next</button></div></footer>
+    </section>
+  </div>
+  <section class="column-value-filter-panel" style="left:880px;top:300px"><header class="value-filter-header"><strong>Filter Status</strong><button class="value-filter-close">×</button></header><input class="value-filter-search" placeholder="Search values"><div class="value-filter-selection-actions"><button class="link-button">Select all</button><button class="link-button">Clear all</button></div><span class="value-filter-summary">1 of 2 values selected</span><div class="value-filter-list"><div class="value-filter-option-row"><label class="value-filter-option"><input type="checkbox"><span>Compliant</span></label><button class="value-filter-only">Only</button></div><div class="value-filter-option-row"><label class="value-filter-option"><input type="checkbox" checked><span>Non-Compliant</span></label><button class="value-filter-only">Only</button></div></div><p class="value-filter-note"></p><footer class="value-filter-footer"><button class="button button-quiet">Clear filter</button><button class="button button-secondary">Cancel</button><button class="button button-primary">Apply</button></footer></section>
+</body>
+</html>

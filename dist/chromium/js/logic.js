@@ -61,12 +61,21 @@ export function evaluateDashboard(data, config, now = new Date()) {
       const completed = parseDate(row.Nist_Assessment_Completion_Date);
       const nextDue = completed ? addCalendarYear(completed) : null;
       const current = Boolean(nextDue && endOfDay(nextDue) >= now);
-      const compliant = current && isCompliant(row.Overall_NIST_Compliance);
+      const sourceCompliant = isCompliant(row.Overall_NIST_Compliance);
+      const findings = Number(row.Open_Findings ?? 0);
+      const sowOverride = !sourceCompliant && findings > 0 && Boolean(nextDue && startOfDay(nextDue) >= startOfTomorrow(now));
+      const compliant = current && (sourceCompliant || sowOverride);
       const reasons = [];
       if (!completed) reasons.push('Assessment completion date missing');
       else if (!current) reasons.push('Annual assessment expired');
-      if (!isCompliant(row.Overall_NIST_Compliance)) reasons.push('NIST assessment or POA&M is non-compliant');
-      return standardize({ ...row, NIST_Next_Due_Date: nextDue ? formatDate(nextDue) : '' }, compliant, reasons);
+      if (!sourceCompliant && !sowOverride) reasons.push('NIST assessment or POA&M is non-compliant');
+      return standardize({
+        ...row,
+        NIST_Next_Due_Date: nextDue ? formatDate(nextDue) : '',
+        _sowStatus: compliant ? 'Compliant' : 'Non-Compliant',
+        _sowOverride: sowOverride,
+        _sowBasis: sowOverride ? `${findings} finding${findings === 1 ? '' : 's'} with assessment due tomorrow or later` : sourceCompliant ? 'Source status is compliant and assessment is current' : '',
+      }, compliant, reasons);
     });
   const recoveryRows = joinSupported(data.recoveryDetails ?? [], 'Application_Name').map((row) => evaluateRecovery(row, now));
 
@@ -161,6 +170,18 @@ function dateWithin(value, days, now) {
 function endOfDay(date) {
   const result = new Date(date);
   result.setHours(23, 59, 59, 999);
+  return result;
+}
+
+function startOfDay(date) {
+  const result = new Date(date);
+  result.setHours(0, 0, 0, 0);
+  return result;
+}
+
+function startOfTomorrow(date) {
+  const result = startOfDay(date);
+  result.setDate(result.getDate() + 1);
   return result;
 }
 

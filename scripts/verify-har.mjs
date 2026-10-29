@@ -11,7 +11,7 @@ const entries = har?.log?.entries ?? [];
 const expectations = {
   '/Metric/GetMetricsDataDetails': ['Application','Maintaining_Organization','Application_Manager','System_Criticality_Assessment_Current','System_Criticality_Due_Date'],
   '/Metric/GetMetricsDataRollUps': ['EXTRACTDATE'],
-  '/Metric/GetAppRecoveryPlanDetails': ['Application_Name','Plans_Compliant_Overall','Plans_Complete','Plans_Current','Plans_Tested_And_Validated','Orientation_Date','Table_Top_Date','Drill_Date','Functional_Date'],
+  '/Metric/GetAppRecoveryPlanDetails': ['Application_Name','Plan_Name','Plans_Compliant_Overall','Plans_Complete','Plans_Current','Plans_Tested_And_Validated','Orientation_Date','Table_Top_Date','Drill_Date','Functional_Date'],
   '/Metric/GetAppRecoveryPlanRollUps': ['EXTRACTDATE'],
   '/Metric/GetRiskProfilerDetails': ['Application','Risk_Prolifer_Due_Date','Risk_Prolifer_Current'],
   '/Metric/GetRiskProfilerRollUps': ['EXTRACTDATE'],

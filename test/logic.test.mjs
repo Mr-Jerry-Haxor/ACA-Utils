@@ -48,6 +48,24 @@ test('NIST uses CUI only and calculates annual due status', () => {
   assert.match(nist.rows[0].NIST_Next_Due_Date, /2027/);
 });
 
+test('NIST SOW status overrides source non-compliance for findings when next due is tomorrow or later', () => {
+  const primary = [app('A', 'Alpha', 'Good Manager'), app('B', 'Alpha', 'Good Manager'), app('C', 'Alpha', 'Good Manager')];
+  const dashboard = evaluateDashboard(dataset(primary, {
+    nistDetails: [
+      { Asset_Name: 'A', Has_CUI: 'True', Overall_NIST_Compliance: 'Non-Compliant', Open_Findings: 3, Nist_Assessment_Completion_Date: '10/30/2025' },
+      { Asset_Name: 'B', Has_CUI: 'True', Overall_NIST_Compliance: 'Non-Compliant', Open_Findings: 0, Nist_Assessment_Completion_Date: '10/30/2025' },
+      { Asset_Name: 'C', Has_CUI: 'True', Overall_NIST_Compliance: 'Non-Compliant', Open_Findings: 2, Nist_Assessment_Completion_Date: '10/29/2025' },
+    ],
+  }), config, new Date('2026-10-29T12:00:00'));
+  const nist = dashboard.metrics.find((metric) => metric.id === 'nist');
+  assert.equal(nist.rows[0].Overall_NIST_Compliance, 'Non-Compliant');
+  assert.equal(nist.rows[0]._sowStatus, 'Compliant');
+  assert.equal(nist.rows[0]._sowOverride, true);
+  assert.equal(nist.rows[1]._sowStatus, 'Non-Compliant');
+  assert.equal(nist.rows[2]._sowStatus, 'Non-Compliant');
+  assert.equal(nist.compliant, 1);
+});
+
 test('recovery highlights approved plans with incomplete validation and RL4 functional gaps', () => {
   const primary = [app('A', 'Alpha', 'Good Manager'), app('B', 'Alpha', 'Good Manager')];
   const dashboard = evaluateDashboard(dataset(primary, {
