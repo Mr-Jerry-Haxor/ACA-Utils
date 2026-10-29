@@ -94,12 +94,26 @@ test('recovery highlights approved plans with incomplete validation and RL4 func
   }), config, new Date('2026-10-29T12:00:00'));
   const recovery = dashboard.metrics.find((metric) => metric.id === 'recovery');
   assert.equal(recovery.rows[0]._validationIncomplete, true);
+  assert.equal(recovery.rows[0]._functionalTest, 'N/A');
   assert.equal(recovery.rows[1]._functionalPending, true);
+  assert.equal(recovery.rows[1]._functionalTest, 'No');
   assert.equal(recovery.rows[1]._compliant, true);
   assert.deepEqual(recovery.rows[1]._reasons, []);
   assert.ok(recovery.rows[1]._recoveryAttention.length > 0);
   assert.equal(recovery.nonCompliant, 1);
   assert.equal(recovery.compliant, 1);
+});
+
+test('functional test formula uses recovery level, required marker, and dynamic current-date cutoff', () => {
+  const primary = [app('A', 'Alpha', 'Good Manager'), app('B', 'Alpha', 'Good Manager')];
+  const dashboard = evaluateDashboard(dataset(primary, {
+    recoveryDetails: [
+      { Application_Name: 'A', Recovery_Level: 'RL 4 - Immediate Recovery - Manual', Plans_Current: 'Compliant', Functional_Date: '10/31/2025' },
+      { Application_Name: 'B', Recovery_Level: 'RL 4 - Immediate Recovery - Manual', Plans_Current: 'Compliant', Functional_Date: 'not required' },
+    ],
+  }), { ...config, managerExceptions: [], asaExceptions: [], applicationExceptions: [], includedOrganizations: ['Alpha'], restrictedOrganizations: {} }, new Date('2026-10-30T12:00:00'));
+  const rows = dashboard.metrics.find((metric) => metric.id === 'recovery').rows;
+  assert.deepEqual(rows.map((row) => row._functionalTest), ['Yes', 'N/A']);
 });
 
 test('overall non-compliant collection preserves a record for each deliverable result', () => {

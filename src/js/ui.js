@@ -1,15 +1,16 @@
 import { fetchAllComplianceData, fetchApplicationInventory } from './api.js';
-import { cloneDefaultConfig } from './default-config.js';
+import { cloneDefaultConfig, DEFAULT_CONFIG_DATE_LABEL } from './default-config.js';
 import { loadConfig, saveConfig } from './config-store.js';
-import { collectNonCompliantRecords, evaluateDashboard, getBlankAsaApplications, normalizeText, organizationKey, organizationLabel, personKey } from './logic.js';
+import { collectNonCompliantRecords, evaluateDashboard, getBlankAsaApplications, normalizeText, organizationKey, organizationLabel, parseDate, personKey } from './logic.js';
 import { displayValue, exportExcel, exportJson } from './export.js';
 import { applyTableState, nextSort, uniqueColumnValues } from './table-state.js';
 import { findInventoryMatch, searchInventoryValues, uniqueInventoryValues } from './inventory-options.js';
+import { calculateArchivePoint, calculateForecastMetric, mondayCheckpoints } from './forecast-archive.js';
 
 const state = { config: null, raw: null, dashboard: null, controller: null };
 let columnFilterOutsideHandler = null;
 let inventoryPickerSequence = 0;
-const refs = Object.fromEntries(['status-line','summary-strip','metric-grid','dr-alerts','modal-backdrop','modal','modal-kicker','modal-title','modal-subtitle','modal-toolbar','modal-content','modal-footer','toast'].map((id) => [id, document.getElementById(id)]));
+const refs = Object.fromEntries(['status-line','summary-strip','metric-grid','forecast-cadence','forecast-period','forecast-target','forecast-summary','forecast-details-button','archive-chart','modal-backdrop','modal','modal-kicker','modal-title','modal-subtitle','modal-toolbar','modal-content','modal-footer','toast'].map((id) => [id, document.getElementById(id)]));
 
 const COMMON_COLUMNS = [
   { key: 'Application', label: 'Application', value: applicationName },
@@ -22,7 +23,7 @@ const COMMON_COLUMNS = [
 const METRIC_COLUMNS = {
   system: [...COMMON_COLUMNS, { key: '_status', label: 'Status' }, { key: 'System_Criticality_Due_Date', label: 'Due Date' }, { key: 'Recovery_Level', label: 'Recovery Level' }, { key: 'AEC_Rating', label: 'AEC Rating' }],
   nist: [...COMMON_COLUMNS, { key: '_nistPopulationStatus', label: 'NIST Population' }, { key: 'Overall_NIST_Compliance', label: 'Existing Status' }, { key: '_sowStatus', label: 'Compliant as per SOW' }, { key: 'Has_CUI', label: 'Has CUI' }, { key: 'Nist_Assessment_Completion_Date', label: 'Completed Date' }, { key: 'NIST_Next_Due_Date', label: 'Calculated Next Due' }, { key: 'Open_Findings', label: 'Number of Findings' }, { key: '_sowBasis', label: 'SOW Basis' }, reasonColumn()],
-  recovery: [COMMON_COLUMNS[0], { key: 'Plan_Name', label: 'Plan Name' }, ...COMMON_COLUMNS.slice(1), { key: '_status', label: 'Calculated Status' }, { key: 'Recovery_Level', label: 'Recovery Level' }, { key: 'Plans_Complete', label: 'Plan Complete' }, { key: 'Plans_Current', label: 'Plan Current' }, { key: 'Plans_Tested_And_Validated', label: 'Tested and Validated' }, { key: 'Overall_DueDate', label: 'Overall Due Date' }, { key: 'Orientation_Date', label: 'Orientation' }, { key: 'Table_Top_Date', label: 'Tabletop' }, { key: 'Drill_Date', label: 'Drill' }, { key: 'Functional_Date', label: 'Functional Exercise' }, { key: '_recoveryAttention', label: 'Recovery Attention' }, reasonColumn()],
+  recovery: [COMMON_COLUMNS[0], { key: 'Plan_Name', label: 'Plan Name' }, ...COMMON_COLUMNS.slice(1), { key: '_status', label: 'Calculated Status' }, { key: 'Recovery_Level', label: 'Recovery Level' }, { key: 'Plans_Complete', label: 'Plan Complete' }, { key: 'Plans_Current', label: 'Plan Current' }, { key: 'Plans_Tested_And_Validated', label: 'Tested and Validated' }, { key: 'Overall_DueDate', label: 'Overall Due Date' }, { key: 'Orientation_Date', label: 'Orientation' }, { key: 'Table_Top_Date', label: 'Tabletop' }, { key: 'Drill_Date', label: 'Drill' }, { key: 'Functional_Date', label: 'Functional Exercise Date' }, { key: '_functionalTest', label: 'Functional Test' }, { key: '_recoveryAttention', label: 'Recovery Attention' }, reasonColumn()],
   risk: [...COMMON_COLUMNS, { key: '_status', label: 'Status' }, { key: 'Risk_Prolifer_Current', label: 'Source Status' }, { key: 'Risk_Prolifer_Due_Date', label: 'Due Date' }, { key: 'AEC_rating', label: 'AEC Rating' }],
   access: [...COMMON_COLUMNS, { key: '_status', label: 'Status' }, { key: 'ACP_Reviewed', label: 'ACP Reviewed' }, { key: 'ACP_Review_Due_Date', label: 'Review Due Date' }, { key: 'Recovery_Level', label: 'Recovery Level' }],
 };
@@ -66,11 +67,27 @@ const OVERALL_NONCOMPLIANT_COLUMNS = [
   reasonColumn(),
 ];
 
+const FORECAST_COLUMNS = [
+  { key: '_deliverable', label: 'Deliverable' },
+  ...COMMON_COLUMNS,
+  { key: '_forecastDueDate', label: 'Due Date' },
+  { key: '_forecastAction', label: 'Suggested Action' },
+  { key: '_forecastNeeded', label: 'Needed for Target' },
+  { key: '_status', label: 'Current Status' },
+  { key: '_sourceStatus', label: 'Existing/Source Status', value: sourceStatus },
+  { key: 'Recovery_Level', label: 'Recovery Level' },
+  reasonColumn(),
+];
+
 document.getElementById('close-button').addEventListener('click', () => parent.postMessage({ source: 'aca-dashboard', type: 'close' }, '*'));
 document.getElementById('refresh-button').addEventListener('click', refreshData);
 document.getElementById('new-applications-button').addEventListener('click', openNewApplications);
 document.getElementById('supported-apps-button').addEventListener('click', openSupportedApplications);
 document.getElementById('config-button').addEventListener('click', openConfiguration);
+refs['forecast-cadence'].addEventListener('change', renderForecast);
+refs['forecast-period'].addEventListener('change', renderForecast);
+refs['forecast-target'].addEventListener('input', renderForecast);
+refs['forecast-details-button'].addEventListener('click', openForecastDetails);
 document.getElementById('modal-close').addEventListener('click', closeModal);
 refs['modal-backdrop'].addEventListener('click', (event) => { if (event.target === refs['modal-backdrop']) closeModal(); });
 refs['modal-content'].addEventListener('scroll', () => {
@@ -109,7 +126,8 @@ async function refreshData() {
 function renderDashboard() {
   renderSummary();
   refs['metric-grid'].replaceChildren(...state.dashboard.metrics.map(metricCard));
-  renderRecoveryAlerts();
+  renderForecast();
+  renderArchive();
 }
 
 function renderSummary() {
@@ -131,7 +149,7 @@ function renderSummary() {
     overall,
     summaryCard('Supported applications', state.dashboard.supportedApps.length, 'Based on MO, scoped app, manager, ASA, and application exception rules'),
     summaryCard('Non-compliant records', nonCompliant, 'Combined results from all five deliverables', { label: 'Expand details', onClick: openOverallNonCompliant }),
-    summaryCard('Deliverables', metrics.length, 'System Criticality, NIST, DR, Risk Profiler, and ACP'),
+    summaryCard('Deliverables', metrics.length, 'SCMP, Recovery Plan, Risk Profiler, ACP, and NIST'),
   );
 }
 
@@ -170,33 +188,180 @@ function metricCard(metric) {
   return card;
 }
 
+function renderForecast() {
+  if (!state.dashboard) return;
+  const cadence = refs['forecast-cadence'].value;
+  refs['forecast-period'].options[0].textContent = cadence === 'monthly' ? 'Current month' : 'Current week';
+  refs['forecast-period'].options[1].textContent = cadence === 'monthly' ? 'Next month' : 'Next week';
+  const now = new Date();
+  const window = forecastWindow(cadence, refs['forecast-period'].value, now);
+  const target = Math.min(100, Math.max(0, Number(refs['forecast-target'].value) || 95.1));
+  refs['forecast-target'].value = target;
+  const forecastRows = [];
+  const totals = { due: 0, atRisk: 0, nonCompliant: 0, actions: 0, shortfall: 0 };
+  const cards = state.dashboard.metrics.map((metric) => {
+    const result = calculateForecastMetric(metric, (row) => metricDueDateValue({ ...row, _deliverableId: metric.id }, now), window, target);
+    totals.due += result.dueRows.length;
+    totals.atRisk += result.atRisk;
+    totals.nonCompliant += result.dueNonCompliant;
+    totals.actions += result.actionsRequired;
+    totals.shortfall += result.outsidePeriodShortfall;
+    result.dueRows.forEach(({ row, due }, index) => forecastRows.push({
+      ...row, _deliverable: metric.title, _deliverableId: metric.id,
+      _forecastDueDate: formatFullDate(due),
+      _forecastAction: row._compliant ? 'Renew or complete before due date' : 'Close current non-compliance',
+      _forecastNeeded: index < result.actionsFromPeriod ? 'Yes' : 'No',
+    }));
+    const detailButton = el('button', { class: 'link-button forecast-card-details', type: 'button' }, `View due records (${formatNumber(result.dueRows.length)})`);
+    detailButton.addEventListener('click', () => openForecastDetails(metric.id));
+    return el('article', { class: `forecast-card${result.outsidePeriodShortfall ? ' has-shortfall' : ''}` },
+      el('div', { class: 'forecast-card-header' }, el('h3', {}, metric.title), el('span', { class: 'forecast-current' }, `Current ${metric.compliantPercent.toFixed(1)}%`)),
+      forecastBullet(result),
+      el('div', { class: 'forecast-metric' },
+        forecastValue('Due workload', result.dueRows.length),
+        forecastValue('At risk', result.atRisk),
+        forecastValue('Due non-compliant', result.dueNonCompliant),
+        forecastValue('Actions required', result.actionsRequired),
+        forecastValue('Next +1%', result.nextPointActions),
+        forecastValue('Target', `${target.toFixed(1)}%`),
+      ),
+      result.outsidePeriodShortfall
+        ? el('p', { class: 'forecast-shortfall' }, `${formatNumber(result.outsidePeriodShortfall)} additional closure${result.outsidePeriodShortfall === 1 ? '' : 's'} needed outside this period.`)
+        : el('p', { class: 'forecast-note' }, `All selected-period actions can support the ${target.toFixed(1)}% target.`),
+      detailButton,
+    );
+  });
+  state.forecastRows = forecastRows;
+  state.forecastWindow = window;
+  const overview = el('div', { class: 'forecast-overview' },
+    el('strong', {}, window.label),
+    forecastValue('Total due', totals.due), forecastValue('At risk', totals.atRisk),
+    forecastValue('Due non-compliant', totals.nonCompliant), forecastValue('Required actions', totals.actions),
+    forecastValue('Outside-period shortfall', totals.shortfall),
+  );
+  refs['forecast-summary'].replaceChildren(overview, ...cards);
+  refs['forecast-details-button'].textContent = `Expand due details (${formatNumber(forecastRows.length)})`;
+  refs['forecast-details-button'].disabled = forecastRows.length === 0;
+  refs['forecast-details-button'].title = `${window.label}; ${formatNumber(forecastRows.length)} records due`;
+}
+
+function forecastBullet(result) {
+  const target = Math.min(100, Math.max(0, result.targetPercent));
+  return el('div', { class: 'forecast-bullet', role: 'img', 'aria-label': `No action ${result.noActionPercent.toFixed(1)} percent, all due work closed ${result.allDueClosedPercent.toFixed(1)} percent, target ${target.toFixed(1)} percent` },
+    el('div', { class: 'forecast-track' },
+      el('span', { class: 'forecast-no-action', style: `width:${result.noActionPercent}%` }),
+      el('span', { class: 'forecast-all-closed', style: `left:${result.noActionPercent}%;width:${Math.max(0, result.allDueClosedPercent - result.noActionPercent)}%` }),
+      el('span', { class: 'forecast-target-marker', style: `left:${target}%` }),
+    ),
+    el('div', { class: 'forecast-bullet-labels' }, el('span', {}, `No action ${result.noActionPercent.toFixed(1)}%`), el('span', {}, `All due closed ${result.allDueClosedPercent.toFixed(1)}%`), el('span', {}, `Target ${target.toFixed(1)}%`)),
+  );
+}
+
+function forecastValue(label, value) {
+  return el('div', {}, el('span', {}, label), el('strong', {}, typeof value === 'number' ? formatNumber(value) : value));
+}
+
+function openForecastDetails(metricId = null) {
+  const rows = (state.forecastRows ?? []).filter((row) => !metricId || row._deliverableId === metricId);
+  openTableModal({
+    kicker: 'Forecast',
+    title: 'Records due in selected period',
+    subtitle: `${formatNumber(rows.length)} records are due in ${state.forecastWindow?.label ?? 'the selected forecast window'}. “Needed for target” prioritizes the earliest due records.`,
+    rows,
+    columns: FORECAST_COLUMNS,
+    filename: 'forecast-due-records',
+  });
+}
+
+function forecastWindow(cadence, period, now) {
+  const start = startOfDay(new Date(now));
+  if (cadence === 'monthly') {
+    start.setDate(1);
+    if (period === 'next') start.setMonth(start.getMonth() + 1);
+    const end = new Date(start);
+    end.setMonth(end.getMonth() + 1);
+    end.setDate(0);
+    return { start, end: endOfDay(end), label: `${period === 'next' ? 'Next' : 'Current'} month (${formatDateLabel(start)} to ${formatDateLabel(end)})` };
+  }
+  const day = start.getDay();
+  const mondayOffset = day === 0 ? -6 : 1 - day;
+  start.setDate(start.getDate() + mondayOffset + (period === 'next' ? 7 : 0));
+  const end = new Date(start);
+  end.setDate(end.getDate() + 6);
+  return { start, end: endOfDay(end), label: `${period === 'next' ? 'Next' : 'Current'} week (${formatDateLabel(start)} to ${formatDateLabel(end)})` };
+}
+
+function renderArchive() {
+  if (!state.dashboard) return;
+  const weeks = mondayCheckpoints(new Date(), 4);
+  const series = state.dashboard.metrics.map((metric) => ({
+    metric,
+    points: weeks.map((week) => ({ week, ...calculateArchivePoint(metric, week, (row, checkpoint) => archiveCompliantAt(metric.id, row, checkpoint)) })),
+  }));
+  const allPercents = series.flatMap((item) => item.points.map((point) => point.percent));
+  const axisMin = Math.max(0, Math.floor((Math.min(...allPercents, 100) - 3) / 5) * 5);
+  const legend = el('div', { class: 'archive-legend' }, ...weeks.map((week, index) => el('span', {}, el('i', { class: `archive-legend-swatch archive-week-${index}`, 'aria-hidden': 'true' }), formatDateLabel(week))));
+  const overview = el('div', { class: 'archive-overview' }, ...series.map(({ metric, points }) => {
+    const delta = points.at(-1).percent - points[0].percent;
+    return el('div', { class: 'archive-overview-card' }, el('span', {}, metric.title), el('strong', {}, `${points.at(-1).percent.toFixed(1)}%`), el('small', { class: delta >= 0 ? 'trend-up' : 'trend-down' }, `${delta >= 0 ? '+' : ''}${delta.toFixed(1)} pts / 4 weeks`));
+  }));
+  const plot = el('div', { class: 'archive-grouped-plot', role: 'img', 'aria-label': `Four-week grouped compliance chart; vertical scale ${axisMin} to 100 percent` }, ...series.map(({ metric, points }) => {
+    const bars = points.map((point, index) => {
+      const height = Math.max(6, (point.percent - axisMin) / Math.max(1, 100 - axisMin) * 165);
+      const button = el('button', { class: `archive-group-bar archive-week-${index}`, type: 'button', style: `height:${height}px`, 'aria-label': `${metric.title}, ${formatDateLabel(point.week)}, ${point.percent.toFixed(1)} percent, ${point.compliant} compliant and ${point.nonCompliant} non-compliant` });
+      button.addEventListener('click', () => openArchiveDetails(metric, point.week));
+      return el('div', { class: 'archive-group-bar-wrap' }, el('span', { class: 'archive-bar-value' }, `${point.percent.toFixed(1)}%`), button);
+    });
+    return el('div', { class: 'archive-deliverable-group' }, el('div', { class: 'archive-deliverable-bars' }, bars), el('strong', { class: 'archive-deliverable-label' }, metric.title));
+  }));
+  refs['archive-chart'].replaceChildren(overview, legend, el('div', { class: 'archive-axis-note' }, `Chart scale: ${axisMin}%–100%. Click any bar for compliant/non-compliant details.`), plot);
+}
+
+function archiveCompliantAt(metricId, row, monday) {
+  if (!row._compliant) return false;
+  const basis = archiveDateBasis(metricId, row, monday);
+  if (!basis) return true;
+  return basis.kind === 'due' ? basis.date >= monday : basis.date <= monday;
+}
+
+function openArchiveDetails(metric, monday) {
+  const point = calculateArchivePoint(metric, monday, (row, checkpoint) => archiveCompliantAt(metric.id, row, checkpoint));
+  const rows = metric.rows.map((row) => ({
+    ...row,
+    _archiveStatus: archiveCompliantAt(metric.id, row, monday) ? 'Compliant at checkpoint' : 'Non-Compliant at checkpoint',
+    _archiveWeek: formatDateLabel(monday),
+    _archiveBasis: formatArchiveBasis(archiveDateBasis(metric.id, row, monday)),
+  }));
+  openTableModal({
+    kicker: 'Archive checkpoint',
+    title: `${metric.title} — ${formatDateLabel(monday)}`,
+    subtitle: `${point.compliant} compliant and ${point.nonCompliant} non-compliant (${point.percent.toFixed(1)}%). Derived from current status and due-date/completion fields; historical API snapshots were not included in the supplied HAR.`,
+    rows,
+    columns: [...METRIC_COLUMNS[metric.id], { key: '_archiveWeek', label: 'Checkpoint' }, { key: '_archiveStatus', label: 'Archive Status' }, { key: '_archiveBasis', label: 'Archive Basis' }],
+    filename: `archive-${metric.id}-${formatDateLabel(monday)}`,
+  });
+}
+
+function archiveDateBasis(metricId, row, checkpoint) {
+  const scoped = { ...row, _deliverableId: metricId };
+  const due = metricDueDateValue(scoped, checkpoint);
+  if (due) return { kind: 'due', date: due };
+  const completionRaw = metricId === 'nist' ? row.Nist_Assessment_Completion_Date : metricId === 'recovery' ? row.Maintenance_Approval_Date : '';
+  const completion = parseDate(completionRaw);
+  return completion ? { kind: 'completion', date: completion } : null;
+}
+
+function formatArchiveBasis(basis) {
+  if (!basis) return 'Current status only';
+  return `${basis.kind === 'due' ? 'Due date' : 'Completion date'}: ${formatDateLabel(basis.date)}`;
+}
+
 function countButton(label, count, percent, className, onClick) {
   const button = el('button', { class: `count-button ${className}`, type: 'button', 'aria-label': `${label}: ${count}, ${percent.toFixed(1)} percent` },
     el('span', {}, label), el('strong', {}, formatNumber(count)), el('small', {}, `${percent.toFixed(1)}%`),
   );
   button.addEventListener('click', onClick);
   return button;
-}
-
-function renderRecoveryAlerts() {
-  const recovery = state.dashboard.metrics.find((metric) => metric.id === 'recovery');
-  const validationIncomplete = recovery.rows.filter((row) => row._validationIncomplete);
-  const functionalPending = recovery.rows.filter((row) => row._functionalPending);
-  refs['dr-alerts'].hidden = validationIncomplete.length === 0 && functionalPending.length === 0;
-  if (refs['dr-alerts'].hidden) return;
-  const heading = el('div', {}, el('p', { class: 'eyebrow' }, 'Recovery Plan attention'), el('h2', {}, 'Approved plans with validation gaps'));
-  const grid = el('div', { class: 'alert-grid' });
-  grid.append(
-    alertItem('Plan validations incomplete', validationIncomplete.length, 'Plan Complete is compliant while Plan Current is non-compliant.', () => openMetric(recovery, validationIncomplete, 'Plan validations incomplete')),
-    alertItem('RL4/RL5 functional exercise pending', functionalPending.length, 'The required annual functional exercise is missing or outside the annual window.', () => openMetric(recovery, functionalPending, 'Functional exercise pending')),
-  );
-  refs['dr-alerts'].replaceChildren(heading, grid);
-}
-
-function alertItem(title, count, description, onClick) {
-  const button = el('button', { class: 'link-button', type: 'button' }, 'View applications');
-  button.addEventListener('click', onClick);
-  return el('article', { class: 'alert-item' }, el('h3', {}, title), el('strong', {}, formatNumber(count)), el('p', {}, description), button);
 }
 
 function openMetric(metric, rows, subtitle) {
@@ -403,7 +568,10 @@ async function openConfiguration() {
 
 function renderConfiguration(inventory) {
   refs['modal-subtitle'].textContent = 'Search the current application inventory and select suggested values. Only conditional rules are stored in IndexedDB.';
-  refs['modal-toolbar'].replaceChildren(el('div', { class: 'config-update-time' }, `Last configuration update: ${formatConfigurationUpdatedAt(state.config.updatedAt)}`));
+  refs['modal-toolbar'].replaceChildren(
+    el('div', { class: 'config-update-time' }, `Last configuration update: ${formatConfigurationUpdatedAt(state.config.updatedAt)}`),
+    el('div', { class: 'default-config-baseline' }, 'Reset baseline: ', el('span', { class: 'default-date-badge' }, DEFAULT_CONFIG_DATE_LABEL)),
+  );
   refs['modal-footer'].replaceChildren();
   const organizations = [...new Set(inventory.map((row) => organizationLabel(row.Maintaining_Organization)).filter(Boolean))].sort(localeSort);
   const besApps = inventory.filter((row) => organizationKey(row.Maintaining_Organization) === organizationKey('Boeing Enterprise Security')).map((row) => String(row.Application ?? '').trim()).filter(Boolean).sort(localeSort);
@@ -451,11 +619,11 @@ function renderConfiguration(inventory) {
   const importInput = el('input', { type: 'file', accept: 'application/json,.json', hidden: true });
   const importButton = el('button', { class: 'button button-secondary', type: 'button' }, 'Import JSON');
   const exportButton = el('button', { class: 'button button-secondary', type: 'button' }, 'Export JSON');
-  const resetButton = el('button', { class: 'button button-danger', type: 'button' }, 'Reset to workbook defaults');
+  const resetButton = el('button', { class: 'button button-danger', type: 'button' }, 'Reset to defaults ', el('span', { class: 'default-date-badge' }, DEFAULT_CONFIG_DATE_LABEL));
   const saveButton = el('button', { class: 'button button-primary', type: 'button' }, 'Save configuration');
   importButton.addEventListener('click', () => importInput.click());
   exportButton.addEventListener('click', () => exportJson(state.config, 'supported-mo-configuration'));
-  resetButton.addEventListener('click', async () => { state.config = await saveConfig(cloneDefaultConfig()); renderConfiguration(inventory); toast('Workbook defaults restored.'); await applyConfig(); });
+  resetButton.addEventListener('click', async () => { state.config = await saveConfig(cloneDefaultConfig()); renderConfiguration(inventory); toast(`${DEFAULT_CONFIG_DATE_LABEL} defaults restored.`); await applyConfig(); });
   importInput.addEventListener('change', async () => {
     const file = importInput.files?.[0];
     if (!file) return;
@@ -756,6 +924,24 @@ function metricDueDate(row) {
   if (row._deliverableId === 'risk') return row.Risk_Prolifer_Due_Date;
   if (row._deliverableId === 'access') return row.ACP_Review_Due_Date;
   return '';
+}
+function metricDueDateValue(row, now) {
+  const raw = metricDueDate(row);
+  if (/due now/i.test(String(raw ?? ''))) return startOfDay(new Date(now));
+  return parseDate(raw);
+}
+function startOfDay(date) {
+  const result = new Date(date);
+  result.setHours(0, 0, 0, 0);
+  return result;
+}
+function endOfDay(date) {
+  const result = new Date(date);
+  result.setHours(23, 59, 59, 999);
+  return result;
+}
+function formatDateLabel(date) {
+  return new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short' }).format(date);
 }
 function formatNumber(value) { return new Intl.NumberFormat('en-IN').format(value); }
 function formatConfigurationUpdatedAt(value) {

@@ -101,10 +101,10 @@ export function evaluateDashboard(data, config, now = new Date()) {
 
   const metricSpecs = [
     ['system', 'System Criticality', systemRows, data.systemRollups, config.excludeBlankAsaFromScmp ? 'Current annual assessment; blank ASA applications excluded from SCMP percentage' : 'Current annual assessment'],
-    ['nist', 'NIST 800-171 CUI', nistRows, data.nistRollups, 'All supported applications; non-compliance remains based on CUI assessments'],
     ['recovery', 'Recovery Plan', recoveryRows, data.recoveryRollups, 'Compliance percentage uses Plan Current status'],
     ['risk', 'Risk Profiler', riskRows, data.riskRollups, 'Current annual Risk Profiler assessment'],
     ['access', 'Access Control Policy', accessRows, data.accessRollups, 'Current application ACP review'],
+    ['nist', 'NIST 800-171 CUI', nistRows, data.nistRollups, 'All supported applications; non-compliance remains based on CUI assessments'],
   ];
   const metrics = metricSpecs.map(([id, title, rows, rollups, note]) => summarizeMetric(id, title, rows, rollups, note, now));
   return { supportedApps, metrics };
@@ -147,9 +147,22 @@ function evaluateRecovery(row, now) {
     _planCurrent: current,
     _validationIncomplete: complete && !current,
     _functionalPending: functionalPending,
+    _functionalTest: functionalTestStatus(level, row.Functional_Date, now),
     _recoveryLevelNumber: level,
     _recoveryAttention: attention,
   }, compliant, reasons);
+}
+
+function functionalTestStatus(level, value, now) {
+  if (level < 4) return 'N/A';
+  const normalized = normalizeText(value);
+  if (normalized === 'not required') return 'N/A';
+  if (normalized === 'never done') return 'No';
+  const date = parseDate(value);
+  if (!date) return 'No';
+  const cutoff = startOfDay(now);
+  cutoff.setDate(cutoff.getDate() - 365);
+  return date > cutoff ? 'Yes' : 'No';
 }
 
 function standardize(row, compliant, reasons) {
