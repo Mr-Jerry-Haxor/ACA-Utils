@@ -943,6 +943,9 @@ function endOfDay(date) {
 function formatDateLabel(date) {
   return new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short' }).format(date);
 }
+function formatFullDate(date) {
+  return new Intl.DateTimeFormat('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }).format(date);
+}
 function formatNumber(value) { return new Intl.NumberFormat('en-IN').format(value); }
 function formatConfigurationUpdatedAt(value) {
   if (!value || Number.isNaN(Date.parse(value))) return 'Not yet saved';
