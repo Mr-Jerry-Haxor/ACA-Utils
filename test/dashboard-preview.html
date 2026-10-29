@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dashboard visual smoke preview</title>
+  <link rel="stylesheet" href="../src/styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="dashboard-header">
+      <div><p class="eyebrow">IT Compliance Scorecard</p><h1>Supported application compliance</h1><p class="status-line">842 supported applications after configuration filters.</p></div>
+      <div class="header-actions"><button class="button button-secondary">Supported Applications</button><button class="button button-primary">Supported MO Configuration</button><button class="button button-quiet">Refresh data</button><button class="button button-quiet">Back to scorecard</button></div>
+    </header>
+    <main>
+      <section class="summary-strip">
+        <article class="summary-card"><span>Compliance across dashboard records</span><strong>88.4%</strong><small>2,731 compliant of 3,089 evaluated records</small><div class="overall-bar"><span class="bar-compliant" style="width:88.4%"></span><span class="bar-noncompliant" style="width:11.6%"></span></div></article>
+        <article class="summary-card"><span>Supported applications</span><strong>842</strong><small>Based on MO, scoped app, manager, and app exception rules</small></article>
+        <article class="summary-card"><span>Non-compliant records</span><strong>358</strong><small>Open any metric card for the application list</small></article>
+        <article class="summary-card"><span>Deliverables</span><strong>5</strong><small>System Criticality, NIST, DR, Risk Profiler, and ACP</small></article>
+      </section>
+      <section class="metric-grid">
+        <article class="metric-card"><div class="donut" style="--value:92.1"><strong>92.1%</strong></div><div class="metric-content"><h3>System Criticality</h3><span class="freshness">Last extracted: 27 Oct 2026, 07:30 pm IST</span><div class="count-grid"><button class="count-button compliant"><span>Compliant</span><strong>775</strong><small>92.1%</small></button><button class="count-button noncompliant"><span>Non-compliant</span><strong>67</strong><small>7.9%</small></button></div></div><div class="metric-actions"><p class="metric-note">Current annual assessment</p><button class="link-button">Expand details</button></div></article>
+        <article class="metric-card"><div class="donut" style="--value:86.8"><strong>86.8%</strong></div><div class="metric-content"><h3>NIST 800-171 CUI</h3><span class="freshness">Last extracted: 27 Oct 2026, 05:00 pm IST</span><div class="count-grid"><button class="count-button compliant"><span>Compliant</span><strong>164</strong><small>86.8%</small></button><button class="count-button noncompliant"><span>Non-compliant</span><strong>25</strong><small>13.2%</small></button></div></div><div class="metric-actions"><p class="metric-note">CUI applications only; due one year after completion</p><button class="link-button">Expand details</button></div></article>
+        <article class="metric-card has-alert"><div class="donut" style="--value:79.4"><strong>79.4%</strong></div><div class="metric-content"><h3>Recovery Plan</h3><span class="freshness">Last extracted: 27 Oct 2026, 12:30 pm IST</span><div class="count-grid"><button class="count-button compliant"><span>Compliant</span><strong>428</strong><small>79.4%</small></button><button class="count-button noncompliant"><span>Non-compliant</span><strong>111</strong><small>20.6%</small></button></div></div><div class="metric-actions"><p class="metric-note">Plan approval, currency, and required validation dates</p><button class="link-button">Expand details</button></div></article>
+        <article class="metric-card"><div class="donut" style="--value:91.7"><strong>91.7%</strong></div><div class="metric-content"><h3>Risk Profiler</h3><span class="freshness">Last extracted: 27 Oct 2026, 05:00 pm IST</span><div class="count-grid"><button class="count-button compliant"><span>Compliant</span><strong>772</strong><small>91.7%</small></button><button class="count-button noncompliant"><span>Non-compliant</span><strong>70</strong><small>8.3%</small></button></div></div><div class="metric-actions"><p class="metric-note">Current annual Risk Profiler assessment</p><button class="link-button">Expand details</button></div></article>
+        <article class="metric-card"><div class="donut" style="--value:90.4"><strong>90.4%</strong></div><div class="metric-content"><h3>Access Control Policy</h3><span class="freshness">Last extracted: 27 Oct 2026, 05:00 pm IST</span><div class="count-grid"><button class="count-button compliant"><span>Compliant</span><strong>761</strong><small>90.4%</small></button><button class="count-button noncompliant"><span>Non-compliant</span><strong>81</strong><small>9.6%</small></button></div></div><div class="metric-actions"><p class="metric-note">Current application ACP review</p><button class="link-button">Expand details</button></div></article>
+      </section>
+      <section class="alert-panel"><div><p class="eyebrow">Recovery Plan attention</p><h2>Approved plans with validation gaps</h2></div><div class="alert-grid"><article class="alert-item"><h3>Plan validations incomplete</h3><strong>42</strong><p>Plan Complete is compliant while Plan Current is non-compliant.</p><button class="link-button">View applications</button></article><article class="alert-item"><h3>RL4/RL5 functional exercise pending</h3><strong>11</strong><p>The required annual functional exercise is missing or outside the annual window.</p><button class="link-button">View applications</button></article></div></section>
+    </main>
+  </div>
+</body>
+</html>

@@ -1,0 +1,26 @@
+{
+  "manifest_version": 3,
+  "name": "ACA-utils",
+  "version": "1.0.0",
+  "description": "Adds a supported-application compliance dashboard to the IT Compliance Scorecard.",
+  "permissions": [],
+  "host_permissions": [
+    "https://scorecard-api.tas-ewd.apps.boeing.com/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["https://scorecard-ui.tas-ewd.apps.boeing.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["dashboard.html", "styles.css", "js/*.js"],
+      "matches": ["https://scorecard-ui.tas-ewd.apps.boeing.com/*"]
+    }
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'none'; base-uri 'none'"
+  }
+}

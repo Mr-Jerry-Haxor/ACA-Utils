@@ -1,0 +1,14 @@
+{
+  "name": "aca-utils",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test",
+    "verify:har": "node scripts/verify-har.mjs",
+    "verify:analysis": "node scripts/verify-analysis.mjs",
+    "build": "node scripts/build.mjs",
+    "package": "powershell -ExecutionPolicy Bypass -File scripts/package.ps1",
+    "check": "npm test && npm run verify:har && npm run verify:analysis && npm run build && npm run package"
+  }
+}
