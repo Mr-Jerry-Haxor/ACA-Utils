@@ -46,6 +46,7 @@
     const setMenuWidth=(width)=>{panel.style.width=width+'px';menu.style.width=width+'px'};
     toggle.addEventListener('dxclick',()=>setMenuWidth(menu.getBoundingClientRect().width>90?60:250));
     menu.addEventListener('dxclick',()=>setMenuWidth(250));
+    setMenuWidth(60);
     setTimeout(()=>{
       document.getElementById('aca-supported-compliance-button')?.click();
       setTimeout(()=>document.body.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true})),250);

@@ -1,12 +1,14 @@
 import { fetchAllComplianceData, fetchApplicationInventory } from './api.js';
 import { cloneDefaultConfig } from './default-config.js';
 import { loadConfig, saveConfig } from './config-store.js';
-import { evaluateDashboard, normalizeText, organizationKey, organizationLabel } from './logic.js';
+import { evaluateDashboard, normalizeText, organizationKey, organizationLabel, personKey } from './logic.js';
 import { copyRows, displayValue, exportExcel, exportJson } from './export.js';
 import { applyTableState, nextSort, uniqueColumnValues } from './table-state.js';
+import { findInventoryMatch, searchInventoryValues, uniqueInventoryValues } from './inventory-options.js';
 
 const state = { config: null, raw: null, dashboard: null, controller: null };
 let columnFilterOutsideHandler = null;
+let inventoryPickerSequence = 0;
 const refs = Object.fromEntries(['status-line','summary-strip','metric-grid','dr-alerts','modal-backdrop','modal','modal-kicker','modal-title','modal-subtitle','modal-toolbar','modal-content','modal-footer','toast'].map((id) => [id, document.getElementById(id)]));
 
 const COMMON_COLUMNS = [
@@ -31,12 +33,15 @@ document.getElementById('supported-apps-button').addEventListener('click', openS
 document.getElementById('config-button').addEventListener('click', openConfiguration);
 document.getElementById('modal-close').addEventListener('click', closeModal);
 refs['modal-backdrop'].addEventListener('click', (event) => { if (event.target === refs['modal-backdrop']) closeModal(); });
+refs['modal-content'].addEventListener('scroll', () => {
+  for (const suggestions of document.querySelectorAll('.inventory-suggestions')) suggestions.hidden = true;
+  for (const input of document.querySelectorAll('.inventory-picker-input')) input.setAttribute('aria-expanded', 'false');
+}, { passive: true });
 addEventListener('keydown', (event) => {
   if (event.key !== 'Escape') return;
   if (document.getElementById('column-value-filter-panel')) closeColumnValueFilter();
   else if (!refs['modal-backdrop'].hidden) closeModal();
 });
-addEventListener('pointerdown', () => parent.postMessage({ source: 'aca-dashboard', type: 'interaction' }, '*'), { passive: true });
 
 initialize().catch(showFatal);
 
@@ -97,9 +102,14 @@ function metricCard(metric) {
   );
   const compliant = countButton('Compliant', metric.compliant, metric.compliantPercent, 'compliant', () => openMetric(metric, metric.compliantRows, 'Compliant applications'));
   const nonCompliant = countButton('Non-compliant', metric.nonCompliant, metric.nonCompliantPercent, 'noncompliant', () => openMetric(metric, metric.nonCompliantRows, 'Non-compliant applications'));
+  const total = el('button', { class: 'metric-total', type: 'button', 'aria-label': `${metric.title}: ${metric.total} applications considered` },
+    el('span', {}, 'Applications considered'), el('strong', {}, formatNumber(metric.total)),
+  );
+  total.addEventListener('click', () => openMetric(metric, metric.rows, 'All evaluated applications'));
   const content = el('div', { class: 'metric-content' },
     el('h3', {}, metric.title),
     el('span', { class: 'freshness', title: metric.extract.raw ? `Source value: ${metric.extract.raw}` : '' }, `Last extracted: ${metric.extract.formatted}`),
+    total,
     el('div', { class: 'count-grid' }, compliant, nonCompliant),
   );
   const expand = el('button', { class: 'link-button', type: 'button' }, 'Expand details');
@@ -319,32 +329,43 @@ async function openConfiguration() {
 }
 
 function renderConfiguration(inventory) {
-  refs['modal-subtitle'].textContent = 'Only conditional MO, scoped-application, manager-exception, and application-exception rules are stored in IndexedDB.';
+  refs['modal-subtitle'].textContent = 'Search the current application inventory and select suggested values. Only conditional rules are stored in IndexedDB.';
   refs['modal-toolbar'].replaceChildren();
   refs['modal-footer'].replaceChildren();
   const organizations = [...new Set(inventory.map((row) => organizationLabel(row.Maintaining_Organization)).filter(Boolean))].sort(localeSort);
   const besApps = inventory.filter((row) => organizationKey(row.Maintaining_Organization) === organizationKey('Boeing Enterprise Security')).map((row) => String(row.Application ?? '').trim()).filter(Boolean).sort(localeSort);
+  const applicationNames = uniqueInventoryValues(inventory.map((row) => row.Application), normalizeText);
+  const managersByOrganization = new Map();
+  for (const row of inventory) {
+    const organization = organizationKey(row.Maintaining_Organization);
+    if (!managersByOrganization.has(organization)) managersByOrganization.set(organization, new Map());
+    const manager = String(row.Application_Manager ?? '').trim();
+    if (manager) managersByOrganization.get(organization).set(personKey(manager), manager);
+  }
+  for (const [organization, managers] of managersByOrganization) managersByOrganization.set(organization, [...managers.values()].sort(localeSort));
   const selectedOrganizations = new Set(state.config.includedOrganizations.map(organizationKey));
   const selectedBesApps = new Set((state.config.restrictedOrganizations['Boeing Enterprise Security'] ?? []).map(normalizeText));
 
   const orgList = el('div', { class: 'check-list' });
   for (const organization of organizations) orgList.append(checkRow(organization, selectedOrganizations.has(organizationKey(organization)), 'organization'));
+  const orgSearch = checkListSearch(orgList, 'Search maintenance organizations');
   const appList = el('div', { class: 'check-list' });
   for (const app of besApps) appList.append(checkRow(app, selectedBesApps.has(normalizeText(app)), 'bes-app'));
+  const besAppSearch = checkListSearch(appList, 'Search Boeing Enterprise Security applications');
   const managerList = el('div', { class: 'rule-list', id: 'manager-rules' });
-  for (const rule of state.config.managerExceptions) managerList.append(managerRuleRow(rule, organizations));
+  for (const rule of state.config.managerExceptions) managerList.append(managerRuleRow(rule, organizations, managersByOrganization));
   const appExceptionList = el('div', { class: 'rule-list', id: 'application-rules' });
-  for (const name of state.config.applicationExceptions) appExceptionList.append(appExceptionRow(name));
+  for (const name of state.config.applicationExceptions) appExceptionList.append(appExceptionRow(name, applicationNames));
 
   const addManager = el('button', { class: 'button button-secondary', type: 'button' }, 'Add manager exception');
-  addManager.addEventListener('click', () => managerList.append(managerRuleRow({ organization: organizations[0], manager: '' }, organizations)));
+  addManager.addEventListener('click', () => managerList.append(managerRuleRow({ organization: organizations[0], manager: '' }, organizations, managersByOrganization)));
   const addApp = el('button', { class: 'button button-secondary', type: 'button' }, 'Add application exception');
-  addApp.addEventListener('click', () => appExceptionList.append(appExceptionRow('')));
+  addApp.addEventListener('click', () => appExceptionList.append(appExceptionRow('', applicationNames)));
 
   const layout = el('div', { class: 'config-layout' },
     el('div', {},
-      el('section', { class: 'config-section' }, el('h3', {}, 'Included maintenance organizations'), el('p', { class: 'config-note' }, 'Applications are included when their exact normalized maintenance organization is selected.'), orgList),
-      el('section', { class: 'config-section' }, el('h3', {}, 'Boeing Enterprise Security applications'), el('p', { class: 'config-note' }, 'This MO is restricted to the selected applications.'), appList),
+      el('section', { class: 'config-section' }, el('h3', {}, 'Included maintenance organizations'), el('p', { class: 'config-note' }, 'Applications are included when their exact normalized maintenance organization is selected.'), orgSearch, orgList),
+      el('section', { class: 'config-section' }, el('h3', {}, 'Boeing Enterprise Security applications'), el('p', { class: 'config-note' }, 'This MO is restricted to the selected applications.'), besAppSearch, appList),
     ),
     el('div', {},
       el('section', { class: 'config-section' }, el('h3', {}, 'Application manager exceptions'), el('p', { class: 'config-note' }, 'Exclude applications only when both the MO and normalized manager name match.'), managerList, addManager),
@@ -369,14 +390,27 @@ function renderConfiguration(inventory) {
   });
   saveButton.addEventListener('click', async () => {
     try {
+      let ignoredRules = 0;
       const includedOrganizations = [...orgList.querySelectorAll('input:checked')].map((input) => input.value);
       const restrictedOrganizations = { 'Boeing Enterprise Security': [...appList.querySelectorAll('input:checked')].map((input) => input.value) };
-      const managerExceptions = [...managerList.querySelectorAll('.rule-row')].map((row) => ({ organization: row.querySelector('select').value, manager: row.querySelector('input').value })).filter((rule) => rule.manager.trim());
-      const applicationExceptions = [...appExceptionList.querySelectorAll('input')].map((input) => input.value).filter((value) => value.trim());
+      const managerExceptions = [...managerList.querySelectorAll('.rule-row')].flatMap((row) => {
+        const organization = row.querySelector('select').value;
+        const input = row.querySelector('[data-inventory-picker="manager"]');
+        if (!input.value.trim()) return [];
+        const manager = input.getInventoryValue();
+        if (!manager) { ignoredRules += 1; return []; }
+        return [{ organization, manager }];
+      });
+      const applicationExceptions = [...appExceptionList.querySelectorAll('[data-inventory-picker="application"]')].flatMap((input) => {
+        if (!input.value.trim()) return [];
+        const application = input.getInventoryValue();
+        if (!application) { ignoredRules += 1; return []; }
+        return [application];
+      });
       state.config = await saveConfig({ schemaVersion: 1, bemsId: '1600103', includedOrganizations, restrictedOrganizations, managerExceptions, applicationExceptions });
       await applyConfig();
       closeModal();
-      toast('Supported application configuration saved.');
+      toast(ignoredRules ? `Configuration saved. ${ignoredRules} unmatched exception ${ignoredRules === 1 ? 'entry was' : 'entries were'} ignored.` : 'Supported application configuration saved.');
     } catch (error) { toast(`Configuration was not saved: ${error.message}`); }
   });
   refs['modal-footer'].append(el('div', { class: 'toolbar-group' }, importInput, importButton, exportButton, resetButton), saveButton);
@@ -390,16 +424,117 @@ async function applyConfig() {
   }
 }
 
-function managerRuleRow(rule, organizations) {
+function managerRuleRow(rule, organizations, managersByOrganization) {
   const select = el('select', { class: 'select-input', 'aria-label': 'Maintenance organization' });
   for (const organization of organizations) select.append(el('option', { value: organization, selected: organizationKey(organization) === organizationKey(rule.organization) }, organization));
-  const input = el('input', { class: 'text-input', type: 'text', value: rule.manager, placeholder: 'Manager name', 'aria-label': 'Application manager' });
-  return removableRuleRow([select, input]);
+  const picker = inventoryPicker({
+    value: rule.manager,
+    placeholder: 'Type to search managers',
+    ariaLabel: 'Application manager',
+    pickerType: 'manager',
+    getOptions: () => managersByOrganization.get(organizationKey(select.value)) ?? [],
+    matchKey: personKey,
+  });
+  select.addEventListener('change', () => picker.input.refreshInventoryPicker());
+  return removableRuleRow([select, picker.element]);
 }
 
-function appExceptionRow(name) {
-  const input = el('input', { class: 'text-input', type: 'text', value: name, placeholder: 'Application name', 'aria-label': 'Excluded application name' });
-  return removableRuleRow([input], 'app-only');
+function appExceptionRow(name, applicationNames) {
+  const picker = inventoryPicker({
+    value: name,
+    placeholder: 'Type to search applications',
+    ariaLabel: 'Excluded application name',
+    pickerType: 'application',
+    getOptions: () => applicationNames,
+    matchKey: normalizeText,
+  });
+  return removableRuleRow([picker.element], 'app-only');
+}
+
+function checkListSearch(list, placeholder) {
+  const input = el('input', { class: 'config-search-input', type: 'search', placeholder, 'aria-label': placeholder });
+  input.addEventListener('input', () => {
+    const query = normalizeText(input.value);
+    for (const row of list.querySelectorAll('.check-row')) row.hidden = Boolean(query) && !normalizeText(row.textContent).includes(query);
+  });
+  return input;
+}
+
+function inventoryPicker({ value, placeholder, ariaLabel, pickerType, getOptions, matchKey }) {
+  const pickerId = `inventory-picker-${++inventoryPickerSequence}`;
+  const originalValue = String(value ?? '').trim();
+  const input = el('input', {
+    class: 'text-input inventory-picker-input', type: 'text', value: originalValue, placeholder,
+    'aria-label': ariaLabel, 'aria-autocomplete': 'list', 'aria-controls': pickerId, 'aria-expanded': 'false',
+    autocomplete: 'off', 'data-inventory-picker': pickerType,
+  });
+  const suggestions = el('div', { id: pickerId, class: 'inventory-suggestions', role: 'listbox', hidden: true });
+  const status = el('span', { class: 'inventory-match-status' });
+  const element = el('div', { class: 'inventory-picker' }, input, suggestions, status);
+
+  const options = () => getOptions();
+  const exactMatch = () => findInventoryMatch(input.value, options(), matchKey);
+  const updateStatus = () => {
+    const match = exactMatch();
+    input.classList.remove('inventory-valid', 'inventory-warning');
+    if (!input.value.trim()) {
+      status.className = 'inventory-match-status';
+      status.textContent = 'Start typing and select a current inventory value.';
+      input.setAttribute('aria-invalid', 'false');
+    } else if (match) {
+      status.className = 'inventory-match-status is-valid';
+      status.textContent = 'Matched current inventory.';
+      input.classList.add('inventory-valid');
+      input.setAttribute('aria-invalid', 'false');
+    } else {
+      status.className = 'inventory-match-status is-warning';
+      status.textContent = 'Not found in the current inventory; this exception will be ignored when saved.';
+      input.classList.add('inventory-warning');
+      input.setAttribute('aria-invalid', 'false');
+    }
+    return match;
+  };
+  const matchingOptions = () => searchInventoryValues(input.value, options(), 12);
+  const renderSuggestions = () => {
+    const matches = matchingOptions();
+    suggestions.replaceChildren(...matches.map((option) => {
+      const button = el('button', { class: 'inventory-suggestion', type: 'button', role: 'option' }, option);
+      button.addEventListener('pointerdown', (event) => event.preventDefault());
+      button.addEventListener('click', () => {
+        input.value = option;
+        suggestions.hidden = true;
+        input.setAttribute('aria-expanded', 'false');
+        updateStatus();
+        input.focus();
+      });
+      return button;
+    }));
+    if (!matches.length) suggestions.append(el('span', { class: 'inventory-no-results' }, 'No matching current inventory values.'));
+    suggestions.hidden = false;
+    input.setAttribute('aria-expanded', 'true');
+    const inputRect = input.getBoundingClientRect();
+    suggestions.style.left = `${Math.round(inputRect.left)}px`;
+    suggestions.style.width = `${Math.round(inputRect.width)}px`;
+    const belowTop = inputRect.bottom + 3;
+    const aboveTop = inputRect.top - suggestions.offsetHeight - 3;
+    suggestions.style.top = `${Math.round(belowTop + suggestions.offsetHeight > innerHeight - 8 && aboveTop >= 8 ? aboveTop : belowTop)}px`;
+  };
+  const initialMatch = exactMatch();
+  if (initialMatch) input.value = initialMatch;
+  input.addEventListener('focus', renderSuggestions);
+  input.addEventListener('input', () => { updateStatus(); renderSuggestions(); });
+  input.addEventListener('blur', () => setTimeout(() => {
+    suggestions.hidden = true;
+    input.setAttribute('aria-expanded', 'false');
+    updateStatus();
+  }, 150));
+  input.getInventoryValue = () => {
+    const match = updateStatus();
+    return match;
+  };
+  input.refreshInventoryPicker = () => { updateStatus(); if (document.activeElement === input) renderSuggestions(); };
+  updateStatus();
+  return { element, input };
 }
 
 function removableRuleRow(items, extraClass = '') {
