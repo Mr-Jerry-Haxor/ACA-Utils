@@ -1,0 +1,31 @@
+#aca-supported-compliance-button {
+  width: 100%; min-height: 50px; display: flex; align-items: center; gap: 0;
+  border: 0; border-top: 1px solid #515159; border-bottom: 1px solid #515159;
+  background: #2b2b35; color: #fff; padding: 0;
+  font: 700 14px/1.2 Arial, sans-serif; cursor: pointer; text-align: left;
+}
+#aca-supported-compliance-button:hover,
+#aca-supported-compliance-button:focus-visible {
+  background: #3f3f4b; color: #ff5722; outline: 2px solid #fff; outline-offset: -3px;
+}
+#aca-supported-compliance-button .aca-nav-mark {
+  width: 60px; min-width: 60px; height: 50px; display: grid; place-items: center; position: relative;
+}
+#aca-supported-compliance-button .aca-nav-mark::before {
+  content: ''; width: 15px; height: 15px; border: 2px solid currentColor; border-radius: 2px;
+  box-shadow: 6px 0 0 -3px currentColor, 0 6px 0 -3px currentColor, 6px 6px 0 -3px currentColor;
+}
+#aca-supported-compliance-button .aca-nav-label {
+  display: block; overflow: hidden; padding-right: 12px; white-space: nowrap; text-overflow: ellipsis;
+}
+.aca-nav-entry { width: 100%; margin-top: auto !important; padding: 0 !important; list-style: none; }
+.aca-nav-entry.aca-nav-compact .aca-nav-label { display: none; }
+#aca-compliance-overlay {
+  background: #fff; border: 0; box-shadow: 0 0 0 1px rgba(0,0,0,.08), 0 8px 28px rgba(0,0,0,.15);
+}
+#aca-compliance-overlay iframe { display: block; width: 100%; height: 100%; border: 0; background: #fff; }
+.aca-dashboard-active > :not(#aca-compliance-overlay) { display: none !important; }
+#aca-compliance-overlay.aca-inline {
+  position: relative; width: 100%; min-height: 480px; z-index: 1; box-shadow: none;
+}
+#aca-compliance-overlay.aca-fixed { position: fixed; z-index: 1499; }

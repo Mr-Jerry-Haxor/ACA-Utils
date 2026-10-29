@@ -15,6 +15,17 @@ $outputs = @(
 )
 
 $resolvedDist = [System.IO.Path]::GetFullPath($dist)
+$currentTargets = @($outputs | ForEach-Object { [System.IO.Path]::GetFullPath($_.Target) })
+$staleOutputs = Get-ChildItem -LiteralPath $dist -File -Filter 'aca-utils-*' -ErrorAction SilentlyContinue
+foreach ($staleOutput in $staleOutputs) {
+  $resolvedStale = [System.IO.Path]::GetFullPath($staleOutput.FullName)
+  if (-not $resolvedStale.StartsWith($resolvedDist, [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw "Stale package target escaped dist: $resolvedStale"
+  }
+  if ($resolvedStale -notin $currentTargets) {
+    Remove-Item -LiteralPath $resolvedStale -Force
+  }
+}
 foreach ($obsoleteOutput in $obsoleteOutputs) {
   $resolvedObsolete = [System.IO.Path]::GetFullPath($obsoleteOutput)
   if (-not $resolvedObsolete.StartsWith($resolvedDist, [System.StringComparison]::OrdinalIgnoreCase)) {
