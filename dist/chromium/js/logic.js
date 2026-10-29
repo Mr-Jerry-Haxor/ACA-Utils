@@ -31,6 +31,12 @@ export function filterSupportedApplications(applications, config) {
     if (!managerExceptions.has(organization)) managerExceptions.set(organization, new Set());
     managerExceptions.get(organization).add(personKey(rule.manager));
   }
+  const asaExceptions = new Map();
+  for (const rule of config.asaExceptions ?? []) {
+    const organization = organizationKey(rule.organization);
+    if (!asaExceptions.has(organization)) asaExceptions.set(organization, new Set());
+    asaExceptions.get(organization).add(personKey(rule.asa));
+  }
 
   return applications.filter((app) => {
     const organization = organizationKey(app.Maintaining_Organization);
@@ -40,6 +46,8 @@ export function filterSupportedApplications(applications, config) {
     if (allowedNames && !allowedNames.has(name)) return false;
     const excludedManagers = managerExceptions.get(organization);
     if (excludedManagers?.has(personKey(app.Application_Manager))) return false;
+    const excludedAsas = asaExceptions.get(organization);
+    if (excludedAsas?.has(personKey(app.Application_Security_Administrator))) return false;
     return true;
   });
 }
@@ -88,6 +96,14 @@ export function evaluateDashboard(data, config, now = new Date()) {
   ];
   const metrics = metricSpecs.map(([id, title, rows, rollups, note]) => summarizeMetric(id, title, rows, rollups, note, now));
   return { supportedApps, metrics };
+}
+
+export function collectNonCompliantRecords(metrics) {
+  return metrics.flatMap((metric) => metric.nonCompliantRows.map((row) => ({
+    ...row,
+    _deliverable: metric.title,
+    _deliverableId: metric.id,
+  })));
 }
 
 function evaluateRecovery(row, now) {

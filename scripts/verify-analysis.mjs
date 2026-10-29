@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import { DEFAULT_CONFIG } from '../src/js/default-config.js';
-import { evaluateDashboard } from '../src/js/logic.js';
+import { collectNonCompliantRecords, evaluateDashboard } from '../src/js/logic.js';
 
 const har = JSON.parse(fs.readFileSync('research data/scorecard-ui.tas-ewd.apps.boeing.com.har', 'utf8'));
 const entries = har?.log?.entries ?? [];
@@ -36,4 +36,5 @@ console.log(JSON.stringify({
   recoveryValidationIncomplete: dashboard.metrics.find((metric) => metric.id === 'recovery').rows.filter((row) => row._validationIncomplete).length,
   recoveryFunctionalPending: dashboard.metrics.find((metric) => metric.id === 'recovery').rows.filter((row) => row._functionalPending).length,
   nistSowOverrides: dashboard.metrics.find((metric) => metric.id === 'nist').rows.filter((row) => row._sowOverride).length,
+  overallNonCompliantRecords: collectNonCompliantRecords(dashboard.metrics).length,
 }, null, 2));

@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>ACA-utils configuration preview</title>
   <link rel="stylesheet" href="../src/styles.css">
+  <style>@media(max-width:600px){.inventory-suggestions{left:8px!important;top:48px!important;width:calc(100vw - 16px)!important}}</style>
 </head>
 <body>
   <div class="modal-backdrop">
@@ -14,6 +15,7 @@
         <section class="config-section"><h3>Included maintenance organizations</h3><input class="config-search-input" value="engineering" aria-label="Search maintenance organizations"><div class="check-list"><label class="check-row"><input type="checkbox" checked><span>Engineering Systems</span></label><label class="check-row"><input type="checkbox"><span>Enterprise AI and Data</span></label></div></section>
         <div>
           <section class="config-section"><h3>Application manager exceptions</h3><p class="config-note">Type to search current managers, then select the exact value.</p><div class="rule-row"><select class="select-input"><option>Engineering Systems</option></select><div class="inventory-picker"><input class="text-input inventory-picker-input inventory-valid" value="Gourish Salgaonkar"><div class="inventory-suggestions" style="left:926px;top:431px;width:339px"><button class="inventory-suggestion">Gourish Salgaonkar</button><button class="inventory-suggestion">Example Engineering Manager</button></div><span class="inventory-match-status is-valid">Matched current inventory.</span></div><button class="icon-button">×</button></div></section>
+          <section class="config-section"><h3>ASA exceptions</h3><p class="config-note">No ASA exceptions configured. Add one when needed.</p><button class="button button-secondary">Add ASA exception</button></section>
           <section class="config-section"><h3>Application exceptions</h3><p class="config-note">Type to search current applications, then select the exact value.</p><div class="rule-row app-only"><div class="inventory-picker"><input class="text-input inventory-picker-input inventory-warning" value="Enterprise"><div class="inventory-suggestions" style="left:580px;top:575px;width:685px"><button class="inventory-suggestion">Enterprise Application Services</button><button class="inventory-suggestion">Enterprise Data Platform</button><button class="inventory-suggestion">Enterprise Security Portal</button></div><span class="inventory-match-status is-warning">Not found in the current inventory; this exception will be ignored when saved.</span></div><button class="icon-button">×</button></div></section>
         </div>
       </div></div>

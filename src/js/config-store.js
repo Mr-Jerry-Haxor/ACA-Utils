@@ -57,6 +57,7 @@ export function validateConfig(input) {
     includedOrganizations: cleanStringArray(input.includedOrganizations),
     restrictedOrganizations: {},
     managerExceptions: [],
+    asaExceptions: [],
     applicationExceptions: cleanStringArray(input.applicationExceptions),
   };
   if (!/^\d{4,12}$/.test(config.bemsId)) throw new Error('BEMS ID must contain 4 to 12 digits.');
@@ -71,6 +72,12 @@ export function validateConfig(input) {
     const organization = cleanString(rule?.organization);
     const manager = cleanString(rule?.manager);
     if (organization && manager) config.managerExceptions.push({ organization, manager });
+  }
+  if (input.asaExceptions != null && !Array.isArray(input.asaExceptions)) throw new Error('ASA exceptions must be an array.');
+  for (const rule of input.asaExceptions ?? []) {
+    const organization = cleanString(rule?.organization);
+    const asa = cleanString(rule?.asa);
+    if (organization && asa) config.asaExceptions.push({ organization, asa });
   }
   return config;
 }

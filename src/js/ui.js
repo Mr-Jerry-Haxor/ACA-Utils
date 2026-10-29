@@ -1,7 +1,7 @@
 import { fetchAllComplianceData, fetchApplicationInventory } from './api.js';
 import { cloneDefaultConfig } from './default-config.js';
 import { loadConfig, saveConfig } from './config-store.js';
-import { evaluateDashboard, normalizeText, organizationKey, organizationLabel, personKey } from './logic.js';
+import { collectNonCompliantRecords, evaluateDashboard, normalizeText, organizationKey, organizationLabel, personKey } from './logic.js';
 import { copyRows, displayValue, exportExcel, exportJson } from './export.js';
 import { applyTableState, nextSort, uniqueColumnValues } from './table-state.js';
 import { findInventoryMatch, searchInventoryValues, uniqueInventoryValues } from './inventory-options.js';
@@ -26,6 +26,45 @@ const METRIC_COLUMNS = {
   risk: [...COMMON_COLUMNS, { key: '_status', label: 'Status' }, { key: 'Risk_Prolifer_Current', label: 'Source Status' }, { key: 'Risk_Prolifer_Due_Date', label: 'Due Date' }, { key: 'AEC_rating', label: 'AEC Rating' }],
   access: [...COMMON_COLUMNS, { key: '_status', label: 'Status' }, { key: 'ACP_Reviewed', label: 'ACP Reviewed' }, { key: 'ACP_Review_Due_Date', label: 'Review Due Date' }, { key: 'Recovery_Level', label: 'Recovery Level' }],
 };
+
+const OVERALL_NONCOMPLIANT_COLUMNS = [
+  { key: '_deliverable', label: 'Deliverable' },
+  ...COMMON_COLUMNS,
+  { key: 'Plan_Name', label: 'Plan Name' },
+  { key: 'Plan_Author', label: 'Plan Author' },
+  { key: 'Application_Type', label: 'Application Type', value: (row) => row.Application_Type ?? row._support?.Application_Type },
+  { key: 'Application_Manager_BEMSID', label: 'Application Manager BEMSID', value: (row) => row.Application_Manager_BEMSID ?? row._support?.Application_Manager_BEMSID },
+  { key: 'DirectReport', label: 'Direct Report' },
+  { key: '_status', label: 'Dashboard Status' },
+  { key: '_sourceStatus', label: 'Existing/Source Status', value: sourceStatus },
+  { key: '_metricDueDate', label: 'Due Date', value: metricDueDate },
+  { key: 'Recovery_Level', label: 'Recovery Level' },
+  { key: '_aecRating', label: 'AEC Rating', value: (row) => row.AEC_Rating ?? row.AEC_rating ?? row._support?.AEC_Rating },
+  { key: 'Has_CUI', label: 'Has CUI' },
+  { key: 'Open_Findings', label: 'Number of Findings' },
+  { key: 'Nist_Assessment_Completion_Date', label: 'NIST Completed Date' },
+  { key: 'NIST_Next_Due_Date', label: 'NIST Calculated Next Due' },
+  { key: '_sowStatus', label: 'Compliant as per SOW' },
+  { key: '_sowBasis', label: 'SOW Basis' },
+  { key: 'Assessment_View_URL', label: 'Assessment URL' },
+  { key: 'Asset_Phase', label: 'Asset Phase' },
+  { key: 'Asset_Type', label: 'Asset Type' },
+  { key: 'Responsible_Person', label: 'Responsible Person' },
+  { key: 'Responsible_Person_BemsID', label: 'Responsible Person BEMSID' },
+  { key: 'Primary_Contact', label: 'Primary Contact' },
+  { key: 'Primary_Contact_BemsID', label: 'Primary Contact BEMSID' },
+  { key: 'Plans_Compliant_Overall', label: 'Plan Overall Status' },
+  { key: 'Plans_Complete', label: 'Plan Complete' },
+  { key: 'Plans_Current', label: 'Plan Current' },
+  { key: 'Plans_Tested_And_Validated', label: 'Plan Tested and Validated' },
+  { key: 'Maintenance_Approval_Date', label: 'Maintenance Approval Date' },
+  { key: 'Maintenance_Due_Date', label: 'Maintenance Due Date' },
+  { key: 'Orientation_Date', label: 'Orientation Date' },
+  { key: 'Table_Top_Date', label: 'Tabletop Date' },
+  { key: 'Drill_Date', label: 'Drill Date' },
+  { key: 'Functional_Date', label: 'Functional Exercise Date' },
+  reasonColumn(),
+];
 
 document.getElementById('close-button').addEventListener('click', () => parent.postMessage({ source: 'aca-dashboard', type: 'close' }, '*'));
 document.getElementById('refresh-button').addEventListener('click', refreshData);
@@ -89,10 +128,22 @@ function renderSummary() {
   );
   refs['summary-strip'].replaceChildren(
     overall,
-    summaryCard('Supported applications', state.dashboard.supportedApps.length, 'Based on MO, scoped app, manager, and app exception rules'),
-    summaryCard('Non-compliant records', nonCompliant, 'Open any metric card for the application list'),
+    summaryCard('Supported applications', state.dashboard.supportedApps.length, 'Based on MO, scoped app, manager, ASA, and application exception rules'),
+    summaryCard('Non-compliant records', nonCompliant, 'Combined results from all five deliverables', { label: 'Expand details', onClick: openOverallNonCompliant }),
     summaryCard('Deliverables', metrics.length, 'System Criticality, NIST, DR, Risk Profiler, and ACP'),
   );
+}
+
+function openOverallNonCompliant() {
+  const rows = collectNonCompliantRecords(state.dashboard.metrics);
+  openTableModal({
+    kicker: 'All deliverables',
+    title: 'Overall non-compliant records',
+    subtitle: `${formatNumber(rows.length)} non-compliant records collected across the five dashboard deliverables.`,
+    rows,
+    columns: OVERALL_NONCOMPLIANT_COLUMNS,
+    filename: 'all-non-compliant-records',
+  });
 }
 
 function metricCard(metric) {
@@ -295,9 +346,20 @@ function openColumnValueFilter({ rows, column, columnIndex, anchor, currentSelec
   closeButton.addEventListener('click', closeColumnValueFilter);
   searchInput.addEventListener('input', () => { search = normalizeText(searchInput.value); renderValues(); });
   document.body.append(panel);
+  const viewport = visualViewport;
+  const viewportLeft = viewport?.offsetLeft ?? 0;
+  const viewportTop = viewport?.offsetTop ?? 0;
+  const viewportWidth = viewport?.width ?? innerWidth;
+  const viewportHeight = viewport?.height ?? innerHeight;
+  panel.style.maxHeight = `${Math.max(80, Math.round(viewportHeight - 16))}px`;
   const anchorRect = anchor.getBoundingClientRect();
-  const left = Math.max(8, Math.min(anchorRect.left, innerWidth - panel.offsetWidth - 8));
-  const top = Math.max(8, Math.min(anchorRect.bottom + 4, innerHeight - panel.offsetHeight - 8));
+  const left = Math.max(viewportLeft + 8, Math.min(anchorRect.left, viewportLeft + viewportWidth - panel.offsetWidth - 8));
+  const belowSpace = viewportTop + viewportHeight - anchorRect.bottom - 8;
+  const aboveSpace = anchorRect.top - viewportTop - 8;
+  const useAbove = belowSpace < Math.min(220, panel.offsetHeight) && aboveSpace > belowSpace;
+  const top = useAbove
+    ? Math.max(viewportTop + 8, anchorRect.top - panel.offsetHeight - 4)
+    : Math.min(anchorRect.bottom + 4, viewportTop + viewportHeight - panel.offsetHeight - 8);
   panel.style.left = `${Math.round(left)}px`;
   panel.style.top = `${Math.round(top)}px`;
   const outsideHandler = (event) => {
@@ -336,13 +398,18 @@ function renderConfiguration(inventory) {
   const besApps = inventory.filter((row) => organizationKey(row.Maintaining_Organization) === organizationKey('Boeing Enterprise Security')).map((row) => String(row.Application ?? '').trim()).filter(Boolean).sort(localeSort);
   const applicationNames = uniqueInventoryValues(inventory.map((row) => row.Application), normalizeText);
   const managersByOrganization = new Map();
+  const asasByOrganization = new Map();
   for (const row of inventory) {
     const organization = organizationKey(row.Maintaining_Organization);
     if (!managersByOrganization.has(organization)) managersByOrganization.set(organization, new Map());
+    if (!asasByOrganization.has(organization)) asasByOrganization.set(organization, new Map());
     const manager = String(row.Application_Manager ?? '').trim();
     if (manager) managersByOrganization.get(organization).set(personKey(manager), manager);
+    const asa = String(row.Application_Security_Administrator ?? '').trim();
+    if (asa) asasByOrganization.get(organization).set(personKey(asa), asa);
   }
   for (const [organization, managers] of managersByOrganization) managersByOrganization.set(organization, [...managers.values()].sort(localeSort));
+  for (const [organization, asas] of asasByOrganization) asasByOrganization.set(organization, [...asas.values()].sort(localeSort));
   const selectedOrganizations = new Set(state.config.includedOrganizations.map(organizationKey));
   const selectedBesApps = new Set((state.config.restrictedOrganizations['Boeing Enterprise Security'] ?? []).map(normalizeText));
 
@@ -354,11 +421,15 @@ function renderConfiguration(inventory) {
   const besAppSearch = checkListSearch(appList, 'Search Boeing Enterprise Security applications');
   const managerList = el('div', { class: 'rule-list', id: 'manager-rules' });
   for (const rule of state.config.managerExceptions) managerList.append(managerRuleRow(rule, organizations, managersByOrganization));
+  const asaList = el('div', { class: 'rule-list', id: 'asa-rules' });
+  for (const rule of state.config.asaExceptions ?? []) asaList.append(asaRuleRow(rule, organizations, asasByOrganization));
   const appExceptionList = el('div', { class: 'rule-list', id: 'application-rules' });
   for (const name of state.config.applicationExceptions) appExceptionList.append(appExceptionRow(name, applicationNames));
 
   const addManager = el('button', { class: 'button button-secondary', type: 'button' }, 'Add manager exception');
   addManager.addEventListener('click', () => managerList.append(managerRuleRow({ organization: organizations[0], manager: '' }, organizations, managersByOrganization)));
+  const addAsa = el('button', { class: 'button button-secondary', type: 'button' }, 'Add ASA exception');
+  addAsa.addEventListener('click', () => asaList.append(asaRuleRow({ organization: organizations[0], asa: '' }, organizations, asasByOrganization)));
   const addApp = el('button', { class: 'button button-secondary', type: 'button' }, 'Add application exception');
   addApp.addEventListener('click', () => appExceptionList.append(appExceptionRow('', applicationNames)));
 
@@ -369,6 +440,7 @@ function renderConfiguration(inventory) {
     ),
     el('div', {},
       el('section', { class: 'config-section' }, el('h3', {}, 'Application manager exceptions'), el('p', { class: 'config-note' }, 'Exclude applications only when both the MO and normalized manager name match.'), managerList, addManager),
+      el('section', { class: 'config-section' }, el('h3', {}, 'ASA exceptions'), el('p', { class: 'config-note' }, 'Exclude applications only when both the MO and normalized ASA name match. This list is initially empty.'), asaList, addAsa),
       el('section', { class: 'config-section' }, el('h3', {}, 'Application exceptions'), el('p', { class: 'config-note' }, 'Exclude these application names regardless of MO.'), appExceptionList, addApp),
     ),
   );
@@ -401,13 +473,21 @@ function renderConfiguration(inventory) {
         if (!manager) { ignoredRules += 1; return []; }
         return [{ organization, manager }];
       });
+      const asaExceptions = [...asaList.querySelectorAll('.rule-row')].flatMap((row) => {
+        const organization = row.querySelector('select').value;
+        const input = row.querySelector('[data-inventory-picker="asa"]');
+        if (!input.value.trim()) return [];
+        const asa = input.getInventoryValue();
+        if (!asa) { ignoredRules += 1; return []; }
+        return [{ organization, asa }];
+      });
       const applicationExceptions = [...appExceptionList.querySelectorAll('[data-inventory-picker="application"]')].flatMap((input) => {
         if (!input.value.trim()) return [];
         const application = input.getInventoryValue();
         if (!application) { ignoredRules += 1; return []; }
         return [application];
       });
-      state.config = await saveConfig({ schemaVersion: 1, bemsId: '1600103', includedOrganizations, restrictedOrganizations, managerExceptions, applicationExceptions });
+      state.config = await saveConfig({ schemaVersion: 1, bemsId: '1600103', includedOrganizations, restrictedOrganizations, managerExceptions, asaExceptions, applicationExceptions });
       await applyConfig();
       closeModal();
       toast(ignoredRules ? `Configuration saved. ${ignoredRules} unmatched exception ${ignoredRules === 1 ? 'entry was' : 'entries were'} ignored.` : 'Supported application configuration saved.');
@@ -433,6 +513,21 @@ function managerRuleRow(rule, organizations, managersByOrganization) {
     ariaLabel: 'Application manager',
     pickerType: 'manager',
     getOptions: () => managersByOrganization.get(organizationKey(select.value)) ?? [],
+    matchKey: personKey,
+  });
+  select.addEventListener('change', () => picker.input.refreshInventoryPicker());
+  return removableRuleRow([select, picker.element]);
+}
+
+function asaRuleRow(rule, organizations, asasByOrganization) {
+  const select = el('select', { class: 'select-input', 'aria-label': 'Maintenance organization' });
+  for (const organization of organizations) select.append(el('option', { value: organization, selected: organizationKey(organization) === organizationKey(rule.organization) }, organization));
+  const picker = inventoryPicker({
+    value: rule.asa,
+    placeholder: 'Type to search ASAs',
+    ariaLabel: 'Application Security Administrator',
+    pickerType: 'asa',
+    getOptions: () => asasByOrganization.get(organizationKey(select.value)) ?? [],
     matchKey: personKey,
   });
   select.addEventListener('change', () => picker.input.refreshInventoryPicker());
@@ -512,12 +607,22 @@ function inventoryPicker({ value, placeholder, ariaLabel, pickerType, getOptions
     if (!matches.length) suggestions.append(el('span', { class: 'inventory-no-results' }, 'No matching current inventory values.'));
     suggestions.hidden = false;
     input.setAttribute('aria-expanded', 'true');
+    const viewport = visualViewport;
+    const viewportLeft = viewport?.offsetLeft ?? 0;
+    const viewportTop = viewport?.offsetTop ?? 0;
+    const viewportWidth = viewport?.width ?? innerWidth;
+    const viewportHeight = viewport?.height ?? innerHeight;
     const inputRect = input.getBoundingClientRect();
-    suggestions.style.left = `${Math.round(inputRect.left)}px`;
-    suggestions.style.width = `${Math.round(inputRect.width)}px`;
-    const belowTop = inputRect.bottom + 3;
-    const aboveTop = inputRect.top - suggestions.offsetHeight - 3;
-    suggestions.style.top = `${Math.round(belowTop + suggestions.offsetHeight > innerHeight - 8 && aboveTop >= 8 ? aboveTop : belowTop)}px`;
+    const popupWidth = Math.min(inputRect.width, viewportWidth - 16);
+    const popupLeft = Math.max(viewportLeft + 8, Math.min(inputRect.left, viewportLeft + viewportWidth - popupWidth - 8));
+    const belowSpace = viewportTop + viewportHeight - inputRect.bottom - 8;
+    const aboveSpace = inputRect.top - viewportTop - 8;
+    const useAbove = belowSpace < 140 && aboveSpace > belowSpace;
+    const availableHeight = Math.max(72, (useAbove ? aboveSpace : belowSpace) - 3);
+    suggestions.style.left = `${Math.round(popupLeft)}px`;
+    suggestions.style.width = `${Math.round(popupWidth)}px`;
+    suggestions.style.maxHeight = `${Math.min(235, Math.round(availableHeight))}px`;
+    suggestions.style.top = `${Math.round(useAbove ? Math.max(viewportTop + 8, inputRect.top - suggestions.offsetHeight - 3) : inputRect.bottom + 3)}px`;
   };
   const initialMatch = exactMatch();
   if (initialMatch) input.value = initialMatch;
@@ -586,7 +691,7 @@ function renderTable(rows, columns, tableState, handlers) {
   for (const row of rows) {
     const cells = columns.map((column) => {
       const value = displayValue(row, column);
-      if (['_status', '_sowStatus', 'Overall_NIST_Compliance'].includes(column.key)) {
+      if (value && ['_status', '_sourceStatus', '_sowStatus', 'Overall_NIST_Compliance', 'Plans_Compliant_Overall', 'Plans_Complete', 'Plans_Current', 'Plans_Tested_And_Validated'].includes(column.key)) {
         const compliant = normalizeText(value) === 'compliant';
         return el('td', {}, el('span', { class: `status-pill ${compliant ? 'status-compliant' : 'status-noncompliant'}` }, value));
       }
@@ -631,14 +736,36 @@ function toast(message) {
   toast.timer = setTimeout(() => { refs.toast.hidden = true; }, 4000);
 }
 
-function summaryCard(label, value, note) {
-  return el('article', { class: 'summary-card' }, el('span', {}, label), el('strong', {}, formatNumber(value)), el('small', {}, note));
+function summaryCard(label, value, note, action = null) {
+  const card = el('article', { class: 'summary-card' }, el('span', {}, label), el('strong', {}, formatNumber(value)), el('small', {}, note));
+  if (action) {
+    const button = el('button', { class: 'summary-card-action', type: 'button' }, action.label);
+    button.addEventListener('click', action.onClick);
+    card.append(button);
+  }
+  return card;
 }
 
 function emptyState(message) { return el('div', { class: 'empty-state' }, message); }
 function reasonColumn() { return { key: '_reasons', label: 'Non-compliance Reason', value: (row) => row._reasons }; }
 function applicationName(row) { return row.Application ?? row.Application_Name ?? row.Asset_Name ?? row._support?.Application ?? ''; }
 function applicationId(row) { return row.Application_Id ?? row.Identifier ?? row.Asset_ID ?? row._support?.Application_Id ?? ''; }
+function sourceStatus(row) {
+  if (row._deliverableId === 'system') return row.System_Criticality_Assessment_Current;
+  if (row._deliverableId === 'nist') return row.Overall_NIST_Compliance;
+  if (row._deliverableId === 'recovery') return row.Plans_Compliant_Overall;
+  if (row._deliverableId === 'risk') return row.Risk_Prolifer_Current;
+  if (row._deliverableId === 'access') return row.ACP_Reviewed;
+  return '';
+}
+function metricDueDate(row) {
+  if (row._deliverableId === 'system') return row.System_Criticality_Due_Date;
+  if (row._deliverableId === 'nist') return row.NIST_Next_Due_Date;
+  if (row._deliverableId === 'recovery') return row.Overall_DueDate;
+  if (row._deliverableId === 'risk') return row.Risk_Prolifer_Due_Date;
+  if (row._deliverableId === 'access') return row.ACP_Review_Due_Date;
+  return '';
+}
 function formatNumber(value) { return new Intl.NumberFormat('en-IN').format(value); }
 function localeSort(a, b) { return a.localeCompare(b, 'en', { sensitivity: 'base' }); }
 

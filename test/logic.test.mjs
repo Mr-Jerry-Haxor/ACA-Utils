@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { evaluateDashboard, filterSupportedApplications, formatPacificExtract, personKey } from '../src/js/logic.js';
+import { collectNonCompliantRecords, evaluateDashboard, filterSupportedApplications, formatPacificExtract, personKey } from '../src/js/logic.js';
 
 const config = {
   schemaVersion: 1,
@@ -8,13 +8,15 @@ const config = {
   includedOrganizations: ['Alpha', 'Boeing Enterprise Security'],
   restrictedOrganizations: { 'Boeing Enterprise Security': ['Allowed Security App'] },
   managerExceptions: [{ organization: 'Alpha', manager: 'Manager, Excluded Q' }],
+  asaExceptions: [{ organization: 'Alpha', asa: 'Excluded ASA' }],
   applicationExceptions: ['Always Excluded'],
 };
 
-test('supported filtering applies MO, restricted app, manager, and global app rules', () => {
+test('supported filtering applies MO, restricted app, manager, ASA, and global app rules', () => {
   const rows = [
     app('Included', 'Alpha', 'Good Manager'),
     app('Manager Excluded', 'Alpha', 'Excluded Manager'),
+    app('ASA Excluded', 'Alpha', 'Good Manager', 'Excluded ASA'),
     app('Always Excluded', 'Alpha', 'Good Manager'),
     app('Allowed Security App', 'Boeing Enterprise Security', 'Good Manager'),
     app('Other Security App', 'Boeing Enterprise Security', 'Good Manager'),
@@ -80,8 +82,18 @@ test('recovery highlights approved plans with incomplete validation and RL4 func
   assert.equal(recovery.nonCompliant, 2);
 });
 
-function app(name, organization, manager) {
-  return { Application: name, Maintaining_Organization: organization, Application_Manager: manager, System_Criticality_Assessment_Current: 'Compliant' };
+test('overall non-compliant collection preserves a record for each deliverable result', () => {
+  const records = collectNonCompliantRecords([
+    { id: 'system', title: 'System Criticality', nonCompliantRows: [{ Application: 'A' }] },
+    { id: 'access', title: 'Access Control Policy', nonCompliantRows: [{ Application: 'A' }, { Application: 'B' }] },
+  ]);
+  assert.equal(records.length, 3);
+  assert.deepEqual(records.map((row) => row._deliverable), ['System Criticality', 'Access Control Policy', 'Access Control Policy']);
+  assert.deepEqual(records.map((row) => row._deliverableId), ['system', 'access', 'access']);
+});
+
+function app(name, organization, manager, asa = '') {
+  return { Application: name, Maintaining_Organization: organization, Application_Manager: manager, Application_Security_Administrator: asa, System_Criticality_Assessment_Current: 'Compliant' };
 }
 
 function dataset(systemDetails, overrides = {}) {
