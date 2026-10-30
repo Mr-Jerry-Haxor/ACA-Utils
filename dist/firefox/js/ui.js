@@ -84,9 +84,9 @@ document.getElementById('refresh-button').addEventListener('click', refreshData)
 document.getElementById('new-applications-button').addEventListener('click', openNewApplications);
 document.getElementById('supported-apps-button').addEventListener('click', openSupportedApplications);
 document.getElementById('config-button').addEventListener('click', openConfiguration);
-refs['forecast-cadence'].addEventListener('change', refreshAnalyticsData);
-refs['forecast-period'].addEventListener('change', refreshAnalyticsData);
-refs['forecast-target'].addEventListener('change', refreshAnalyticsData);
+refs['forecast-cadence'].addEventListener('change', renderForecast);
+refs['forecast-period'].addEventListener('change', renderForecast);
+refs['forecast-target'].addEventListener('input', renderForecast);
 refs['forecast-details-button'].addEventListener('click', openForecastDetails);
 refs['forecast-refresh-button'].addEventListener('click', refreshAnalyticsData);
 refs['archive-refresh-button'].addEventListener('click', refreshAnalyticsData);
@@ -309,9 +309,7 @@ function forecastValue(label, value) {
   return el('div', {}, el('span', {}, label), el('strong', {}, typeof value === 'number' ? formatNumber(value) : value));
 }
 
-async function openForecastDetails(metricId = null) {
-  const refreshed = await refreshAnalyticsData();
-  if (!refreshed) return;
+function openForecastDetails(metricId = null) {
   const rows = (state.forecastRows ?? []).filter((row) => !metricId || row._deliverableId === metricId);
   openTableModal({
     kicker: 'Forecast',
@@ -371,9 +369,7 @@ function archiveCompliantAt(metricId, row, monday) {
   return archiveAssessment(metricId, row, monday).compliant;
 }
 
-async function openArchiveDetails(metricId, monday) {
-  const refreshed = await refreshAnalyticsData();
-  if (!refreshed) return;
+function openArchiveDetails(metricId, monday) {
   const metric = state.dashboard.metrics.find((item) => item.id === metricId);
   if (!metric) return;
   const point = calculateArchivePoint(metric, monday, (row, checkpoint) => archiveCompliantAt(metric.id, row, checkpoint));
@@ -709,8 +705,12 @@ function renderConfiguration(inventory) {
   refs['modal-footer'].append(el('div', { class: 'toolbar-group' }, importInput, importButton, exportButton, resetButton), saveButton);
 }
 
-async function applyConfig() {
-  if (state.raw) await refreshAnalyticsData();
+function applyConfig() {
+  if (state.raw) {
+    state.dashboard = evaluateDashboard(state.raw, state.config);
+    renderDashboard();
+    refs['status-line'].textContent = `${formatNumber(state.dashboard.supportedApps.length)} supported applications after configuration filters.`;
+  }
 }
 
 function managerRuleRow(manager, allManagers) {

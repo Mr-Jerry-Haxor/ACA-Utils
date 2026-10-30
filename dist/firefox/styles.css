@@ -5,12 +5,12 @@
   --line: #dee2e6;
   --soft: #f6f8fa;
   --paper: #ffffff;
-  --blue: #9fc5df;
-  --blue-dark: #466b84;
-  --green: #8fc8a8;
-  --red: #e3a1a6;
-  --amber: #d8ad67;
-  --cyan: #a8d8df;
+  --blue: #2cabfa;
+  --blue-dark: #014975;
+  --green: #35d257;
+  --red: #ff4655;
+  --amber: #cf943d;
+  --cyan: #69c1cd;
   --shadow: 0 12px 35px rgba(0,0,0,.14);
   font-family: Arial, Helvetica, sans-serif;
 }
@@ -121,7 +121,7 @@ main { padding: 1.25rem 1.5rem 2rem; }
 .archive-group-bar-wrap { height: 190px; display: flex; flex-direction: column; align-items: center; justify-content: end; gap: .25rem; }
 .archive-group-bar { width: 100%; min-height: 6px; border: 0; border-radius: 3px 3px 0 0; cursor: pointer; }
 .archive-group-bar:hover, .archive-group-bar:focus-visible { filter: brightness(.86); outline: 3px solid rgba(51,122,183,.25); }
-.archive-week-0 { background: #9dbbd0; }.archive-week-1 { background: #b5cfe0; }.archive-week-2 { background: #a7cfb8; }.archive-week-3 { background: #e8b1b5; }
+.archive-week-0 { background: #4f8fb8; }.archive-week-1 { background: #72aed0; }.archive-week-2 { background: #67b98b; }.archive-week-3 { background: #df7c85; }
 .archive-bar-value { color: var(--ink); font-size: .78rem; font-weight: 700; }
 .archive-deliverable-label { display: block; margin-top: .45rem; text-align: center; font-size: .78rem; }
 
