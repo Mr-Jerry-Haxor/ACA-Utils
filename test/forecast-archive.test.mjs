@@ -30,6 +30,37 @@ test('forecast reports shortfall when selected-period workload cannot reach targ
   assert.equal(result.outsidePeriodShortfall, 14);
 });
 
+test('current forecast includes only non-compliant backlog from before the selected period', () => {
+  const rows = [
+    { id: 'old-noncompliant', _compliant: false, due: '2026-09-10' },
+    { id: 'old-compliant', _compliant: true, due: '2026-09-11' },
+    { id: 'earlier-this-month', _compliant: false, due: '2026-10-05' },
+    { id: 'upcoming', _compliant: true, due: '2026-10-31' },
+    { id: 'later', _compliant: false, due: '2026-11-01' },
+  ];
+  const metric = { total: 5, compliant: 2, compliantPercent: 40, rows };
+  const result = calculateForecastMetric(metric, (row) => new Date(`${row.due}T00:00:00`), {
+    start: new Date('2026-10-01T00:00:00'), end: new Date('2026-10-31T23:59:59'),
+    asOf: new Date('2026-10-30T00:00:00'), includeOverdueNonCompliant: true,
+  }, 95.1);
+  assert.deepEqual(result.dueRows.map(({ row }) => row.id), ['old-noncompliant', 'earlier-this-month', 'upcoming']);
+  assert.equal(result.overdueNonCompliant, 2);
+});
+
+test('next forecast does not include overdue backlog', () => {
+  const rows = [
+    { id: 'overdue', _compliant: false, due: '2026-10-01' },
+    { id: 'next', _compliant: false, due: '2026-11-03' },
+  ];
+  const metric = { total: 2, compliant: 0, compliantPercent: 0, rows };
+  const result = calculateForecastMetric(metric, (row) => new Date(`${row.due}T00:00:00`), {
+    start: new Date('2026-11-01T00:00:00'), end: new Date('2026-11-30T23:59:59'),
+    asOf: new Date('2026-10-30T00:00:00'), includeOverdueNonCompliant: false,
+  }, 95.1);
+  assert.deepEqual(result.dueRows.map(({ row }) => row.id), ['next']);
+  assert.equal(result.overdueNonCompliant, 0);
+});
+
 test('archive checkpoints are four chronological Mondays', () => {
   const weeks = mondayCheckpoints(new Date('2026-10-30T12:00:00'), 4);
   assert.deepEqual(weeks.map((date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`), ['2026-10-05', '2026-10-12', '2026-10-19', '2026-10-26']);

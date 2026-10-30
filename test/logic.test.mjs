@@ -50,25 +50,39 @@ test('Pacific rollup time converts to IST using DST on the extract date', () => 
   assert.match(result.formatted, /07:30 pm|7:30 pm/i);
 });
 
-test('NIST denominator includes all supported applications while CUI drives non-compliance', () => {
-  const primary = [app('A', 'Alpha', 'Good Manager'), app('B', 'Alpha', 'Good Manager')];
+test('NIST denominator matches the Risk Profiler application population while CUI drives non-compliance', () => {
+  const primary = [app('A', 'Alpha', 'Good Manager'), app('B', 'Alpha', 'Good Manager'), app('Planning App', 'Alpha', 'Good Manager')];
   const dashboard = evaluateDashboard(dataset(primary, {
+    riskDetails: [
+      { Application: 'A', Risk_Prolifer_Current: 'Compliant' },
+      { Application: 'B', Risk_Prolifer_Current: 'Compliant' },
+    ],
     nistDetails: [
       { Asset_Name: 'A', Has_CUI: 'True', Overall_NIST_Compliance: 'Compliant', Nist_Assessment_Completion_Date: '01/02/2026' },
       { Asset_Name: 'B', Has_CUI: 'False', Overall_NIST_Compliance: 'Compliant', Nist_Assessment_Completion_Date: '01/02/2026' },
+      { Asset_Name: 'Planning App', Has_CUI: 'True', Overall_NIST_Compliance: 'Non-Compliant' },
     ],
   }), config, new Date('2026-12-01T12:00:00'));
+  const risk = dashboard.metrics.find((metric) => metric.id === 'risk');
   const nist = dashboard.metrics.find((metric) => metric.id === 'nist');
+  assert.equal(risk.total, 2);
   assert.equal(nist.total, 2);
+  assert.equal(nist.total, risk.total);
   assert.equal(nist.compliant, 2);
   assert.equal(nist.nonCompliant, 0);
   assert.match(nist.rows[0].NIST_Next_Due_Date, /2027/);
-  assert.equal(nist.rows[1]._nistPopulationStatus, 'Supported non-CUI application');
+  assert.equal(nist.rows[1]._nistPopulationStatus, 'Risk Profiler non-CUI application');
+  assert.equal(nist.rows.some((row) => row.Asset_Name === 'Planning App'), false);
 });
 
 test('NIST SOW status overrides source non-compliance for findings when next due is tomorrow or later', () => {
   const primary = [app('A', 'Alpha', 'Good Manager'), app('B', 'Alpha', 'Good Manager'), app('C', 'Alpha', 'Good Manager')];
   const dashboard = evaluateDashboard(dataset(primary, {
+    riskDetails: [
+      { Application: 'A', Risk_Prolifer_Current: 'Compliant' },
+      { Application: 'B', Risk_Prolifer_Current: 'Compliant' },
+      { Application: 'C', Risk_Prolifer_Current: 'Compliant' },
+    ],
     nistDetails: [
       { Asset_Name: 'A', Has_CUI: 'True', Overall_NIST_Compliance: 'Non-Compliant', Open_Findings: 3, Nist_Assessment_Completion_Date: '10/30/2025' },
       { Asset_Name: 'B', Has_CUI: 'True', Overall_NIST_Compliance: 'Non-Compliant', Open_Findings: 0, Nist_Assessment_Completion_Date: '10/30/2025' },

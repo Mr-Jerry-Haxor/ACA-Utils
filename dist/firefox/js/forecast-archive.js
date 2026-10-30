@@ -1,9 +1,14 @@
 export function calculateForecastMetric(metric, dueDateForRow, window, targetPercent) {
-  const dueRows = metric.rows.map((row) => ({ row, due: dueDateForRow(row) }))
-    .filter(({ due }) => due && due >= window.start && due <= window.end)
+  const dueRows = metric.rows.map((row) => {
+    const due = dueDateForRow(row);
+    const overdueNonCompliant = Boolean(due && window.includeOverdueNonCompliant && !row._compliant && due < window.asOf);
+    return { row, due, overdueNonCompliant };
+  })
+    .filter(({ due, overdueNonCompliant }) => due && ((due >= window.start && due <= window.end) || overdueNonCompliant))
     .sort((left, right) => left.due - right.due);
   const atRisk = dueRows.filter(({ row }) => row._compliant).length;
   const dueNonCompliant = dueRows.length - atRisk;
+  const overdueNonCompliant = dueRows.filter((item) => item.overdueNonCompliant).length;
   const baselineCount = Math.max(0, metric.compliant - atRisk);
   const targetCount = Math.ceil(metric.total * targetPercent / 100);
   const actionsRequired = Math.max(0, targetCount - baselineCount);
@@ -17,6 +22,7 @@ export function calculateForecastMetric(metric, dueDateForRow, window, targetPer
     dueRows,
     atRisk,
     dueNonCompliant,
+    overdueNonCompliant,
     targetCount,
     actionsRequired,
     actionsFromPeriod,

@@ -71,6 +71,7 @@ const FORECAST_COLUMNS = [
   { key: '_deliverable', label: 'Deliverable' },
   ...COMMON_COLUMNS,
   { key: '_forecastDueDate', label: 'Due Date' },
+  { key: '_forecastScope', label: 'Forecast Scope' },
   { key: '_forecastAction', label: 'Suggested Action' },
   { key: '_forecastNeeded', label: 'Needed for Target' },
   { key: '_status', label: 'Current Status' },
@@ -246,27 +247,30 @@ function renderForecast() {
   const target = Math.min(100, Math.max(0, Number(refs['forecast-target'].value) || 95.1));
   refs['forecast-target'].value = target;
   const forecastRows = [];
-  const totals = { due: 0, atRisk: 0, nonCompliant: 0, actions: 0, shortfall: 0 };
+  const totals = { due: 0, overdue: 0, atRisk: 0, nonCompliant: 0, actions: 0, shortfall: 0 };
   const cards = state.dashboard.metrics.map((metric) => {
     const result = calculateForecastMetric(metric, (row) => metricDueDateValue({ ...row, _deliverableId: metric.id }, now), window, target);
     totals.due += result.dueRows.length;
+    totals.overdue += result.overdueNonCompliant;
     totals.atRisk += result.atRisk;
     totals.nonCompliant += result.dueNonCompliant;
     totals.actions += result.actionsRequired;
     totals.shortfall += result.outsidePeriodShortfall;
-    result.dueRows.forEach(({ row, due }, index) => forecastRows.push({
+    result.dueRows.forEach(({ row, due, overdueNonCompliant }, index) => forecastRows.push({
       ...row, _deliverable: metric.title, _deliverableId: metric.id,
       _forecastDueDate: formatFullDate(due),
-      _forecastAction: row._compliant ? 'Renew or complete before due date' : 'Close current non-compliance',
+      _forecastScope: overdueNonCompliant ? 'Past-due non-compliant backlog' : 'Selected forecast period',
+      _forecastAction: overdueNonCompliant ? 'Close overdue non-compliance' : row._compliant ? 'Renew or complete before due date' : 'Close current non-compliance',
       _forecastNeeded: index < result.actionsFromPeriod ? 'Yes' : 'No',
     }));
-    const detailButton = el('button', { class: 'link-button forecast-card-details', type: 'button' }, `View due records (${formatNumber(result.dueRows.length)})`);
+    const detailButton = el('button', { class: 'link-button forecast-card-details', type: 'button' }, `View forecast records (${formatNumber(result.dueRows.length)})`);
     detailButton.addEventListener('click', () => openForecastDetails(metric.id));
     return el('article', { class: `forecast-card${result.outsidePeriodShortfall ? ' has-shortfall' : ''}` },
       el('div', { class: 'forecast-card-header' }, el('h3', {}, metric.title), el('span', { class: 'forecast-current' }, `Current ${metric.compliantPercent.toFixed(1)}%`)),
       forecastBullet(result),
       el('div', { class: 'forecast-metric' },
         forecastValue('Due workload', result.dueRows.length),
+        forecastValue('Past due non-compliant', result.overdueNonCompliant),
         forecastValue('At risk', result.atRisk),
         forecastValue('Due non-compliant', result.dueNonCompliant),
         forecastValue('Actions required', result.actionsRequired),
@@ -274,8 +278,8 @@ function renderForecast() {
         forecastValue('Target', `${target.toFixed(1)}%`),
       ),
       result.outsidePeriodShortfall
-        ? el('p', { class: 'forecast-shortfall' }, `${formatNumber(result.outsidePeriodShortfall)} additional closure${result.outsidePeriodShortfall === 1 ? '' : 's'} needed outside this period.`)
-        : el('p', { class: 'forecast-note' }, `All selected-period actions can support the ${target.toFixed(1)}% target.`),
+        ? el('p', { class: 'forecast-shortfall' }, `${formatNumber(result.outsidePeriodShortfall)} additional closure${result.outsidePeriodShortfall === 1 ? '' : 's'} needed beyond the included workload.`)
+        : el('p', { class: 'forecast-note' }, `The included workload can support the ${target.toFixed(1)}% target.`),
       detailButton,
     );
   });
@@ -283,12 +287,12 @@ function renderForecast() {
   state.forecastWindow = window;
   const overview = el('div', { class: 'forecast-overview' },
     el('strong', {}, window.label),
-    forecastValue('Total due', totals.due), forecastValue('At risk', totals.atRisk),
+    forecastValue('Total due', totals.due), forecastValue('Past due non-compliant', totals.overdue), forecastValue('At risk', totals.atRisk),
     forecastValue('Due non-compliant', totals.nonCompliant), forecastValue('Required actions', totals.actions),
-    forecastValue('Outside-period shortfall', totals.shortfall),
+    forecastValue('Additional shortfall', totals.shortfall),
   );
   refs['forecast-summary'].replaceChildren(overview, ...cards);
-  refs['forecast-details-button'].textContent = `Expand due details (${formatNumber(forecastRows.length)})`;
+  refs['forecast-details-button'].textContent = `Expand forecast details (${formatNumber(forecastRows.length)})`;
   refs['forecast-details-button'].disabled = forecastRows.length === 0;
   refs['forecast-details-button'].title = `${window.label}; ${formatNumber(forecastRows.length)} records due`;
 }
@@ -313,8 +317,8 @@ function openForecastDetails(metricId = null) {
   const rows = (state.forecastRows ?? []).filter((row) => !metricId || row._deliverableId === metricId);
   openTableModal({
     kicker: 'Forecast',
-    title: 'Records due in selected period',
-    subtitle: `${formatNumber(rows.length)} records are due in ${state.forecastWindow?.label ?? 'the selected forecast window'}. “Needed for target” prioritizes the earliest due records.`,
+    title: 'Forecast workload details',
+    subtitle: `${formatNumber(rows.length)} records are included in ${state.forecastWindow?.label ?? 'the selected forecast window'}. “Needed for target” prioritizes the earliest due records.`,
     rows,
     columns: FORECAST_COLUMNS,
     filename: 'forecast-due-records',
@@ -322,21 +326,23 @@ function openForecastDetails(metricId = null) {
 }
 
 function forecastWindow(cadence, period, now) {
-  const start = startOfDay(new Date(now));
+  const asOf = startOfDay(new Date(now));
+  const start = new Date(asOf);
+  const includeOverdueNonCompliant = period === 'current';
   if (cadence === 'monthly') {
     start.setDate(1);
     if (period === 'next') start.setMonth(start.getMonth() + 1);
     const end = new Date(start);
     end.setMonth(end.getMonth() + 1);
     end.setDate(0);
-    return { start, end: endOfDay(end), label: `${period === 'next' ? 'Next' : 'Current'} month (${formatDateLabel(start)} to ${formatDateLabel(end)})` };
+    return { start, end: endOfDay(end), asOf, includeOverdueNonCompliant, label: `${period === 'next' ? 'Next' : 'Current'} month (${formatDateLabel(start)} to ${formatDateLabel(end)})${includeOverdueNonCompliant ? ' + past-due non-compliant backlog' : ''}` };
   }
   const day = start.getDay();
   const mondayOffset = day === 0 ? -6 : 1 - day;
   start.setDate(start.getDate() + mondayOffset + (period === 'next' ? 7 : 0));
   const end = new Date(start);
   end.setDate(end.getDate() + 6);
-  return { start, end: endOfDay(end), label: `${period === 'next' ? 'Next' : 'Current'} week (${formatDateLabel(start)} to ${formatDateLabel(end)})` };
+  return { start, end: endOfDay(end), asOf, includeOverdueNonCompliant, label: `${period === 'next' ? 'Next' : 'Current'} week (${formatDateLabel(start)} to ${formatDateLabel(end)})${includeOverdueNonCompliant ? ' + past-due non-compliant backlog' : ''}` };
 }
 
 function renderArchive() {

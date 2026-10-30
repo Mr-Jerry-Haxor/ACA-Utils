@@ -64,16 +64,17 @@ export function evaluateDashboard(data, config, now = new Date()) {
   const riskRows = joinSupported(data.riskDetails ?? [], 'Application').map((row) => standardize(row, isCompliant(row.Risk_Prolifer_Current), []));
   const accessRows = joinSupported(data.accessDetails ?? [], 'Application').map((row) => standardize(row, isCompliant(row.ACP_Reviewed), []));
   const nistByName = new Map((data.nistDetails ?? []).map((row) => [normalizeText(row.Asset_Name), row]));
-  const nistRows = supportedApps.map((application) => {
+  const nistRows = riskRows.map((riskRow) => {
+    const application = riskRow._support ?? riskRow;
     const detail = nistByName.get(normalizeText(application.Application));
     const row = detail ? { ...application, ...detail, _support: application } : { ...application, Asset_Name: application.Application, _support: application };
     if (normalizeText(row.Has_CUI) !== 'true') {
       return standardize({
         ...row,
-        _nistPopulationStatus: detail ? 'Supported non-CUI application' : 'Supported application without NIST detail',
+        _nistPopulationStatus: detail ? 'Risk Profiler non-CUI application' : 'Risk Profiler application without NIST detail',
         _sowStatus: 'Compliant',
         _sowOverride: false,
-        _sowBasis: 'Included in the supported-application denominator; not added to the CUI non-compliant population',
+        _sowBasis: 'Included in the Risk Profiler application denominator; not added to the CUI non-compliant population',
         NIST_Next_Due_Date: '',
       }, true, []);
     }
@@ -104,7 +105,7 @@ export function evaluateDashboard(data, config, now = new Date()) {
     ['recovery', 'Recovery Plan', recoveryRows, data.recoveryRollups, 'Compliance percentage uses Plan Current status'],
     ['risk', 'Risk Profiler', riskRows, data.riskRollups, 'Current annual Risk Profiler assessment'],
     ['access', 'Access Control Policy', accessRows, data.accessRollups, 'Current application ACP review'],
-    ['nist', 'NIST 800-171 CUI', nistRows, data.nistRollups, 'All supported applications; non-compliance remains based on CUI assessments'],
+    ['nist', 'NIST 800-171 CUI', nistRows, data.nistRollups, 'Risk Profiler application population; non-compliance remains based on CUI assessments'],
   ];
   const metrics = metricSpecs.map(([id, title, rows, rollups, note]) => summarizeMetric(id, title, rows, rollups, note, now));
   return { supportedApps, metrics };
