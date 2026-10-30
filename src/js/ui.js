@@ -5,12 +5,12 @@ import { collectNonCompliantRecords, evaluateDashboard, getBlankAsaApplications,
 import { displayValue, exportExcel, exportJson } from './export.js';
 import { applyTableState, nextSort, uniqueColumnValues } from './table-state.js';
 import { findInventoryMatch, searchInventoryValues, uniqueInventoryValues } from './inventory-options.js';
-import { calculateArchivePoint, calculateForecastMetric, mondayCheckpoints } from './forecast-archive.js';
+import { annualCompletionFromDue, annualDueFromCompletion, calculateArchivePoint, calculateForecastMetric, deriveArchiveStatus, mondayCheckpoints, recoveryOrientationDue } from './forecast-archive.js';
 
-const state = { config: null, raw: null, dashboard: null, controller: null };
+const state = { config: null, raw: null, dashboard: null, controller: null, analyticsRefreshedAt: null, analyticsRefreshPromise: null };
 let columnFilterOutsideHandler = null;
 let inventoryPickerSequence = 0;
-const refs = Object.fromEntries(['status-line','summary-strip','metric-grid','forecast-cadence','forecast-period','forecast-target','forecast-summary','forecast-details-button','archive-chart','modal-backdrop','modal','modal-kicker','modal-title','modal-subtitle','modal-toolbar','modal-content','modal-footer','toast'].map((id) => [id, document.getElementById(id)]));
+const refs = Object.fromEntries(['status-line','summary-strip','metric-grid','forecast-cadence','forecast-period','forecast-target','forecast-summary','forecast-details-button','forecast-refresh-button','forecast-live-status','archive-chart','archive-refresh-button','archive-live-status','modal-backdrop','modal','modal-kicker','modal-title','modal-subtitle','modal-toolbar','modal-content','modal-footer','toast'].map((id) => [id, document.getElementById(id)]));
 
 const COMMON_COLUMNS = [
   { key: 'Application', label: 'Application', value: applicationName },
@@ -84,10 +84,12 @@ document.getElementById('refresh-button').addEventListener('click', refreshData)
 document.getElementById('new-applications-button').addEventListener('click', openNewApplications);
 document.getElementById('supported-apps-button').addEventListener('click', openSupportedApplications);
 document.getElementById('config-button').addEventListener('click', openConfiguration);
-refs['forecast-cadence'].addEventListener('change', renderForecast);
-refs['forecast-period'].addEventListener('change', renderForecast);
-refs['forecast-target'].addEventListener('input', renderForecast);
+refs['forecast-cadence'].addEventListener('change', refreshAnalyticsData);
+refs['forecast-period'].addEventListener('change', refreshAnalyticsData);
+refs['forecast-target'].addEventListener('change', refreshAnalyticsData);
 refs['forecast-details-button'].addEventListener('click', openForecastDetails);
+refs['forecast-refresh-button'].addEventListener('click', refreshAnalyticsData);
+refs['archive-refresh-button'].addEventListener('click', refreshAnalyticsData);
 document.getElementById('modal-close').addEventListener('click', closeModal);
 refs['modal-backdrop'].addEventListener('click', (event) => { if (event.target === refs['modal-backdrop']) closeModal(); });
 refs['modal-content'].addEventListener('scroll', () => {
@@ -114,12 +116,58 @@ async function refreshData() {
   try {
     state.raw = await fetchAllComplianceData(state.config.bemsId, { signal: state.controller.signal });
     state.dashboard = evaluateDashboard(state.raw, state.config);
+    state.analyticsRefreshedAt = new Date();
     renderDashboard();
+    setAnalyticsStatus('ready');
     setLoading(false, `${formatNumber(state.dashboard.supportedApps.length)} supported applications after configuration filters.`);
   } catch (error) {
     if (error.name === 'AbortError') return;
     setLoading(false, `Unable to load compliance data: ${error.message}`);
+    setAnalyticsStatus('error', error.message);
     refs['metric-grid'].replaceChildren(emptyState('Data could not be loaded. Confirm corporate-network access and sign-in, then refresh.'));
+  }
+}
+
+async function refreshAnalyticsData() {
+  if (state.analyticsRefreshPromise) return state.analyticsRefreshPromise;
+  setAnalyticsStatus('loading');
+  state.analyticsRefreshPromise = (async () => {
+    try {
+      const raw = await fetchAllComplianceData(state.config.bemsId);
+      state.raw = raw;
+      state.dashboard = evaluateDashboard(raw, state.config);
+      state.analyticsRefreshedAt = new Date();
+      renderDashboard();
+      setAnalyticsStatus('ready');
+      refs['status-line'].textContent = `${formatNumber(state.dashboard.supportedApps.length)} supported applications. Forecast and archive refreshed from live website data.`;
+      return true;
+    } catch (error) {
+      setAnalyticsStatus('error', error.message);
+      toast(`Live compliance refresh failed: ${error.message}`);
+      return false;
+    } finally {
+      state.analyticsRefreshPromise = null;
+    }
+  })();
+  return state.analyticsRefreshPromise;
+}
+
+function setAnalyticsStatus(status, detail = '') {
+  const controls = [refs['forecast-refresh-button'], refs['archive-refresh-button']];
+  for (const button of controls) if (button) button.disabled = status === 'loading';
+  const label = status === 'loading'
+    ? 'Refreshing live data…'
+    : status === 'error'
+      ? `Live refresh failed${detail ? `: ${detail}` : ''}`
+      : state.analyticsRefreshedAt
+        ? `Live data refreshed ${formatLiveRefreshTime(state.analyticsRefreshedAt)}`
+        : 'Waiting for live data';
+  for (const id of ['forecast-live-status', 'archive-live-status']) {
+    const node = refs[id];
+    if (!node) continue;
+    node.textContent = label;
+    node.classList.toggle('is-loading', status === 'loading');
+    node.classList.toggle('is-error', status === 'error');
   }
 }
 
@@ -261,7 +309,9 @@ function forecastValue(label, value) {
   return el('div', {}, el('span', {}, label), el('strong', {}, typeof value === 'number' ? formatNumber(value) : value));
 }
 
-function openForecastDetails(metricId = null) {
+async function openForecastDetails(metricId = null) {
+  const refreshed = await refreshAnalyticsData();
+  if (!refreshed) return;
   const rows = (state.forecastRows ?? []).filter((row) => !metricId || row._deliverableId === metricId);
   openTableModal({
     kicker: 'Forecast',
@@ -309,7 +359,7 @@ function renderArchive() {
     const bars = points.map((point, index) => {
       const height = Math.max(6, (point.percent - axisMin) / Math.max(1, 100 - axisMin) * 165);
       const button = el('button', { class: `archive-group-bar archive-week-${index}`, type: 'button', style: `height:${height}px`, 'aria-label': `${metric.title}, ${formatDateLabel(point.week)}, ${point.percent.toFixed(1)} percent, ${point.compliant} compliant and ${point.nonCompliant} non-compliant` });
-      button.addEventListener('click', () => openArchiveDetails(metric, point.week));
+      button.addEventListener('click', () => openArchiveDetails(metric.id, point.week));
       return el('div', { class: 'archive-group-bar-wrap' }, el('span', { class: 'archive-bar-value' }, `${point.percent.toFixed(1)}%`), button);
     });
     return el('div', { class: 'archive-deliverable-group' }, el('div', { class: 'archive-deliverable-bars' }, bars), el('strong', { class: 'archive-deliverable-label' }, metric.title));
@@ -318,42 +368,41 @@ function renderArchive() {
 }
 
 function archiveCompliantAt(metricId, row, monday) {
-  if (!row._compliant) return false;
-  const basis = archiveDateBasis(metricId, row, monday);
-  if (!basis) return true;
-  return basis.kind === 'due' ? basis.date >= monday : basis.date <= monday;
+  return archiveAssessment(metricId, row, monday).compliant;
 }
 
-function openArchiveDetails(metric, monday) {
+async function openArchiveDetails(metricId, monday) {
+  const refreshed = await refreshAnalyticsData();
+  if (!refreshed) return;
+  const metric = state.dashboard.metrics.find((item) => item.id === metricId);
+  if (!metric) return;
   const point = calculateArchivePoint(metric, monday, (row, checkpoint) => archiveCompliantAt(metric.id, row, checkpoint));
   const rows = metric.rows.map((row) => ({
     ...row,
     _archiveStatus: archiveCompliantAt(metric.id, row, monday) ? 'Compliant at checkpoint' : 'Non-Compliant at checkpoint',
     _archiveWeek: formatDateLabel(monday),
-    _archiveBasis: formatArchiveBasis(archiveDateBasis(metric.id, row, monday)),
+    _archiveBasis: formatArchiveBasis(archiveAssessment(metric.id, row, monday)),
   }));
   openTableModal({
     kicker: 'Archive checkpoint',
     title: `${metric.title} — ${formatDateLabel(monday)}`,
-    subtitle: `${point.compliant} compliant and ${point.nonCompliant} non-compliant (${point.percent.toFixed(1)}%). Derived from current status and due-date/completion fields; historical API snapshots were not included in the supplied HAR.`,
+    subtitle: `${point.compliant} compliant and ${point.nonCompliant} non-compliant (${point.percent.toFixed(1)}%). Calculated from freshly loaded status, completion-date, and due-date fields.`,
     rows,
     columns: [...METRIC_COLUMNS[metric.id], { key: '_archiveWeek', label: 'Checkpoint' }, { key: '_archiveStatus', label: 'Archive Status' }, { key: '_archiveBasis', label: 'Archive Basis' }],
     filename: `archive-${metric.id}-${formatDateLabel(monday)}`,
   });
 }
 
-function archiveDateBasis(metricId, row, checkpoint) {
+function archiveAssessment(metricId, row, checkpoint) {
   const scoped = { ...row, _deliverableId: metricId };
-  const due = metricDueDateValue(scoped, checkpoint);
-  if (due) return { kind: 'due', date: due };
-  const completionRaw = metricId === 'nist' ? row.Nist_Assessment_Completion_Date : metricId === 'recovery' ? row.Maintenance_Approval_Date : '';
-  const completion = parseDate(completionRaw);
-  return completion ? { kind: 'completion', date: completion } : null;
+  const due = metricDueDateValue(scoped, new Date());
+  const completion = metricCompletionDateValue(scoped);
+  return { ...deriveArchiveStatus({ currentCompliant: row._compliant, dueDate: due, completionDate: completion }, checkpoint), due, completion };
 }
 
-function formatArchiveBasis(basis) {
-  if (!basis) return 'Current status only';
-  return `${basis.kind === 'due' ? 'Due date' : 'Completion date'}: ${formatDateLabel(basis.date)}`;
+function formatArchiveBasis(assessment) {
+  const dates = [assessment.completion ? `Completion ${formatFullDate(assessment.completion)}` : '', assessment.due ? `Due ${formatFullDate(assessment.due)}` : ''].filter(Boolean);
+  return `${assessment.reason}${dates.length ? ` — ${dates.join('; ')}` : ''}`;
 }
 
 function countButton(label, count, percent, className, onClick) {
@@ -661,11 +710,7 @@ function renderConfiguration(inventory) {
 }
 
 async function applyConfig() {
-  if (state.raw) {
-    state.dashboard = evaluateDashboard(state.raw, state.config);
-    renderDashboard();
-    refs['status-line'].textContent = `${formatNumber(state.dashboard.supportedApps.length)} supported applications after configuration filters.`;
-  }
+  if (state.raw) await refreshAnalyticsData();
 }
 
 function managerRuleRow(manager, allManagers) {
@@ -926,7 +971,24 @@ function metricDueDate(row) {
   return '';
 }
 function metricDueDateValue(row, now) {
+  if (row._deliverableId === 'nist') {
+    const completion = parseDate(row.Nist_Assessment_Completion_Date);
+    return annualDueFromCompletion(completion) ?? parseDate(row.NIST_Next_Due_Date);
+  }
+  if (row._deliverableId === 'recovery') {
+    const orientation = parseDate(row.Orientation_Date);
+    return recoveryOrientationDue(orientation, row.Recovery_Level) ?? parseMetricRawDate(row.Overall_DueDate, now);
+  }
   const raw = metricDueDate(row);
+  return parseMetricRawDate(raw, now);
+}
+function metricCompletionDateValue(row) {
+  if (row._deliverableId === 'nist') return parseDate(row.Nist_Assessment_Completion_Date);
+  if (row._deliverableId === 'recovery') return parseDate(row.Orientation_Date);
+  if (['system', 'risk', 'access'].includes(row._deliverableId)) return annualCompletionFromDue(parseDate(metricDueDate(row)));
+  return null;
+}
+function parseMetricRawDate(raw, now) {
   if (/due now/i.test(String(raw ?? ''))) return startOfDay(new Date(now));
   return parseDate(raw);
 }
@@ -945,6 +1007,12 @@ function formatDateLabel(date) {
 }
 function formatFullDate(date) {
   return new Intl.DateTimeFormat('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }).format(date);
+}
+function formatLiveRefreshTime(date) {
+  return new Intl.DateTimeFormat('en-IN', {
+    timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true,
+  }).format(date) + ' IST';
 }
 function formatNumber(value) { return new Intl.NumberFormat('en-IN').format(value); }
 function formatConfigurationUpdatedAt(value) {

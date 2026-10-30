@@ -48,6 +48,41 @@ export function calculateArchivePoint(metric, checkpoint, compliantAt) {
   };
 }
 
+export function deriveArchiveStatus({ currentCompliant, dueDate = null, completionDate = null }, checkpoint) {
+  const checkpointStart = startOfDay(checkpoint);
+  const checkpointEnd = new Date(checkpointStart);
+  checkpointEnd.setHours(23, 59, 59, 999);
+  const due = dueDate ? startOfDay(dueDate) : null;
+  const completion = completionDate ? startOfDay(completionDate) : null;
+  if (completion && completion > checkpointEnd) return { compliant: false, reason: 'Completion occurred after checkpoint' };
+  if (due && due < checkpointStart) return { compliant: false, reason: 'Due date had expired before checkpoint' };
+  if (completion || due) return { compliant: true, reason: completion && due ? 'Completed and within due date at checkpoint' : completion ? 'Completed by checkpoint' : 'Due date remained current at checkpoint' };
+  return { compliant: Boolean(currentCompliant), reason: 'No dated evidence available; current status used' };
+}
+
+export function annualCompletionFromDue(dueDate) {
+  if (!dueDate) return null;
+  const result = startOfDay(dueDate);
+  result.setFullYear(result.getFullYear() - 1);
+  return result;
+}
+
+export function annualDueFromCompletion(completionDate) {
+  if (!completionDate) return null;
+  const result = startOfDay(completionDate);
+  result.setFullYear(result.getFullYear() + 1);
+  return result;
+}
+
+export function recoveryOrientationDue(orientationDate, recoveryLevel) {
+  if (!orientationDate) return null;
+  const level = Number(String(recoveryLevel ?? '').match(/RL\s*(\d)/i)?.[1] ?? 0);
+  if (level < 1 || level > 5) return null;
+  const result = startOfDay(orientationDate);
+  result.setDate(result.getDate() + (level <= 2 ? 365 : 180));
+  return result;
+}
+
 function percentage(numerator, denominator) {
   return denominator ? numerator / denominator * 100 : 0;
 }

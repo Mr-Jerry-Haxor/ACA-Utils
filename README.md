@@ -10,4 +10,4 @@ npm run check
 
 Load `dist/chromium` as an unpacked extension in Chrome or Edge. Load `dist/firefox` temporarily in Firefox, or use the packaged `.xpi` for signing/distribution workflows.
 
-The research HAR and workbook remain development inputs only and are never copied into `dist/`.
+Research inputs are used during development only and are never copied into `dist/`.

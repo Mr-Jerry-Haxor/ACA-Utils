@@ -29,10 +29,14 @@
       <section id="forecast-section" class="feature-section" aria-labelledby="forecast-title">
         <header class="feature-header">
           <div><p class="eyebrow">Forecast</p><h2 id="forecast-title">Upcoming compliance workload</h2><p class="feature-note">Choose a period and target to see which records need closure.</p></div>
-          <div class="feature-controls">
-            <label>Cadence<select id="forecast-cadence" class="select-input"><option value="monthly">Monthly</option><option value="weekly">Weekly</option></select></label>
-            <label>Period<select id="forecast-period" class="select-input"><option value="current">Current</option><option value="next">Next</option></select></label>
-            <label>Target %<input id="forecast-target" class="text-input" type="number" min="0" max="100" step="0.1" value="95.1" list="forecast-target-options"><datalist id="forecast-target-options"><option value="95.1"></option><option value="96"></option><option value="97"></option><option value="98"></option><option value="99"></option><option value="100"></option></datalist></label>
+          <div class="feature-header-actions">
+            <span id="forecast-live-status" class="live-data-status" aria-live="polite">Waiting for live data</span>
+            <div class="feature-controls">
+              <label>Cadence<select id="forecast-cadence" class="select-input"><option value="monthly">Monthly</option><option value="weekly">Weekly</option></select></label>
+              <label>Period<select id="forecast-period" class="select-input"><option value="current">Current</option><option value="next">Next</option></select></label>
+              <label>Target %<input id="forecast-target" class="text-input" type="number" min="0" max="100" step="0.1" value="95.1" list="forecast-target-options"><datalist id="forecast-target-options"><option value="95.1"></option><option value="96"></option><option value="97"></option><option value="98"></option><option value="99"></option><option value="100"></option></datalist></label>
+              <button id="forecast-refresh-button" class="button button-secondary" type="button">Refresh live data</button>
+            </div>
           </div>
         </header>
         <div id="forecast-summary" class="forecast-summary"></div>
@@ -40,7 +44,11 @@
       </section>
       <section id="archive-section" class="feature-section" aria-labelledby="archive-title">
         <header class="feature-header">
-          <div><p class="eyebrow">Archive</p><h2 id="archive-title">Four-week compliance history</h2><p class="feature-note">Monday checkpoints are derived from current completion and due-date fields; historical snapshots are not present in the supplied HAR.</p></div>
+          <div><p class="eyebrow">Archive</p><h2 id="archive-title">Four-week compliance history</h2><p class="feature-note">Monday checkpoints are calculated from live completion and due-date fields.</p></div>
+          <div class="feature-header-actions">
+            <span id="archive-live-status" class="live-data-status" aria-live="polite">Waiting for live data</span>
+            <button id="archive-refresh-button" class="button button-secondary" type="button">Refresh live data</button>
+          </div>
         </header>
         <div id="archive-chart" class="archive-chart"></div>
       </section>

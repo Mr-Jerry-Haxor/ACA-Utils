@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { calculateArchivePoint, calculateForecastMetric, mondayCheckpoints } from '../src/js/forecast-archive.js';
+import { annualCompletionFromDue, annualDueFromCompletion, calculateArchivePoint, calculateForecastMetric, deriveArchiveStatus, mondayCheckpoints, recoveryOrientationDue } from '../src/js/forecast-archive.js';
 
 test('forecast includes at-risk renewals in target actions', () => {
   const rows = [
@@ -40,4 +40,20 @@ test('archive point reconciles compliant and non-compliant counts', () => {
   const metric = { total: 3, rows: [{ ok: true }, { ok: false }, { ok: true }] };
   const point = calculateArchivePoint(metric, new Date('2026-10-26'), (row) => row.ok);
   assert.deepEqual(point, { compliant: 2, nonCompliant: 1, percent: 2 / 3 * 100 });
+});
+
+test('archive derives checkpoint compliance from completion and due dates', () => {
+  const checkpoint = new Date('2026-10-26T00:00:00');
+  assert.equal(deriveArchiveStatus({ currentCompliant: false, dueDate: new Date('2026-11-01') }, checkpoint).compliant, true);
+  assert.equal(deriveArchiveStatus({ currentCompliant: true, dueDate: new Date('2026-10-20') }, checkpoint).compliant, false);
+  assert.equal(deriveArchiveStatus({ currentCompliant: true, completionDate: new Date('2026-10-27') }, checkpoint).compliant, false);
+  assert.equal(deriveArchiveStatus({ currentCompliant: false }, checkpoint).compliant, false);
+});
+
+test('annual and recovery dates are derived from the required source fields', () => {
+  const key = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+  assert.equal(key(annualCompletionFromDue(new Date(2027, 2, 15))), '2026-03-15');
+  assert.equal(key(annualDueFromCompletion(new Date(2026, 2, 15))), '2027-03-15');
+  assert.equal(key(recoveryOrientationDue(new Date(2026, 0, 1), 'RL 2 - Intermediate Recovery')), '2027-01-01');
+  assert.equal(key(recoveryOrientationDue(new Date(2026, 0, 1), 'RL 4 - Immediate Recovery')), '2026-06-30');
 });
