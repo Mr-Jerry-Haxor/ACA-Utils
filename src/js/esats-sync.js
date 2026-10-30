@@ -2,10 +2,10 @@ import { fetchApplicationContacts, fetchApplicationLifecycle, fetchApplicationsF
 import { filterConfiguredEsatsApplications, filterOrganizationApplications, matchSupportedOrganizations, normalizeEsatsRecord } from './esats-logic.js';
 import { saveEsatsSnapshot } from './esats-store.js';
 
-export async function synchronizeEsats(config, { signal, onProgress = () => {} } = {}) {
+export async function synchronizeEsats(config, { signal, token, onProgress = () => {} } = {}) {
   const startedAt = new Date();
   onProgress(1);
-  const organizations = await fetchMaintainingOrganizations({ signal });
+  const organizations = await fetchMaintainingOrganizations({ signal, token });
   if (!Array.isArray(organizations)) throw new Error('The maintaining-organization response was not a list.');
   const { matched, missing } = matchSupportedOrganizations(organizations, config);
   if (!matched.length) throw new Error('None of the configured maintaining organizations were found in ESATS.');
@@ -13,14 +13,14 @@ export async function synchronizeEsats(config, { signal, onProgress = () => {} }
 
   let completedOrganizationRequests = 0;
   const organizationResults = await mapLimit(matched, 5, async (organization) => {
-    const rows = await fetchApplicationsForOrganization(organization.id, { signal });
+    const rows = await fetchApplicationsForOrganization(organization.id, { signal, token });
     completedOrganizationRequests += 1;
     onProgress(5 + Math.round(completedOrganizationRequests / matched.length * 14));
     if (!Array.isArray(rows)) throw new Error(`Applications for ${organization.name} were not returned as a list.`);
     return filterOrganizationApplications(rows, organization, config).map((application) => ({ application, organization }));
   });
 
-  const markedApplications = await fetchMarkedForDeletionApplications({ signal });
+  const markedApplications = await fetchMarkedForDeletionApplications({ signal, token });
   const markedById = new Map((Array.isArray(markedApplications) ? markedApplications : []).map((application) => [Number(application.esatsId), application]));
   onProgress(20);
 
@@ -40,7 +40,7 @@ export async function synchronizeEsats(config, { signal, onProgress = () => {} }
     const tracked = async (operation) => {
       try { return await operation(); }
       catch (error) {
-        if (error.name === 'AbortError') throw error;
+        if (error.name === 'AbortError' || error.status === 401 || error.status === 403) throw error;
         detailErrors += 1;
         return { __syncError: error.message };
       }
@@ -50,8 +50,8 @@ export async function synchronizeEsats(config, { signal, onProgress = () => {} }
       }
     };
     const [lifecycleResult, contactsResult] = await Promise.all([
-      tracked(() => fetchApplicationLifecycle(esatsId, { signal })),
-      tracked(() => fetchApplicationContacts(esatsId, { signal })),
+      tracked(() => fetchApplicationLifecycle(esatsId, { signal, token })),
+      tracked(() => fetchApplicationContacts(esatsId, { signal, token })),
     ]);
     const lifecycle = lifecycleResult?.__syncError ? null : lifecycleResult;
     const contacts = contactsResult?.__syncError ? [] : contactsResult;

@@ -9,12 +9,12 @@
   color: #0b6680; background: #dceff4; outline: 2px solid #0b6680; outline-offset: 1px;
 }
 .aca-esats-dashboard-icon {
-  width: 21px; height: 18px; display: grid; grid-template-columns: repeat(3, 1fr); align-items: end; gap: 2px;
-  border-bottom: 2px solid currentColor;
+  width: 24px; height: 24px; display: block; overflow: visible;
 }
-.aca-esats-dashboard-icon::before,
-.aca-esats-dashboard-icon::after { content: ''; display: block; background: currentColor; }
-.aca-esats-dashboard-icon::before { height: 9px; box-shadow: 7px -5px 0 currentColor, 14px -1px 0 currentColor; }
+.aca-icon-panel { fill: rgba(76,155,184,.12); stroke: currentColor; stroke-width: 1.5; }
+.aca-icon-line { fill: none; stroke: currentColor; stroke-width: 1.2; stroke-linecap: round; opacity: .55; }
+.aca-icon-bar { fill: currentColor; opacity: .88; }
+.aca-icon-trend { fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
 #aca-esats-dashboard-overlay {
   position: fixed; inset: 64px 0 0; z-index: 1200; overflow: hidden;
   border-top: 1px solid #c8ced3; background: #f4f7f8;

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   filterConfiguredEsatsApplications, filterOrganizationApplications, matchSupportedOrganizations,
-  normalizeEsatsRecord, personIdentity, retirementRowsForInterval, summarizeEsatsApplications,
+  isNewEsatsApplication, normalizeEsatsRecord, personIdentity, retirementRowsForInterval, summarizeEsatsApplications,
 } from '../src/js/esats-logic.js';
 
 const baseConfig = {
@@ -78,4 +78,17 @@ test('retirement, deletion, and lifecycle interval counts use their source dates
   assert.equal(summary.intervals.find((item) => item.days === 15).markedForDeletion, 1);
   assert.equal(summary.markedForDeletionUndated, 1);
   assert.deepEqual(retirementRowsForInterval(summary.retiredRows, 7, 'retired', now).map((item) => item.applicationName), ['Retired']);
+});
+
+test('new ESATS applications are supported applications without an ASA', () => {
+  const rows = [
+    { applicationName: 'New App', securityAdministrators: [] },
+    { applicationName: 'Blank ASA App', securityAdministrators: ['  '] },
+    { applicationName: 'Established App', securityAdministrators: ['Example ASA'] },
+  ];
+  assert.equal(isNewEsatsApplication(rows[0]), true);
+  assert.equal(isNewEsatsApplication(rows[2]), false);
+  const summary = summarizeEsatsApplications(rows);
+  assert.equal(summary.newApplications, 2);
+  assert.deepEqual(summary.newRows.map((row) => row.applicationName), ['New App', 'Blank ASA App']);
 });

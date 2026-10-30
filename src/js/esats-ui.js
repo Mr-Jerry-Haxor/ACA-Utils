@@ -11,6 +11,7 @@ const state = {
   applications: [],
   summary: null,
   syncing: false,
+  supportedFilter: null,
   retiredFilter: null,
   lifecycleDays: null,
 };
@@ -18,8 +19,8 @@ const state = {
 const refs = Object.fromEntries([
   'sync-status','refresh-data','close-dashboard','sync-progress','progress-fill','progress-percent',
   'config-count','mvo-list','summary-cards','supported-table','retired-table','lifecycle-table',
-  'supported-table-section','retired-table-section','lifecycle-table-section','retired-filter-label',
-  'lifecycle-filter-label','clear-retired-filter','clear-lifecycle-filter','toast',
+  'supported-table-section','retired-table-section','lifecycle-table-section','supported-filter-label','retired-filter-label',
+  'lifecycle-filter-label','clear-supported-filter','clear-retired-filter','clear-lifecycle-filter','toast',
 ].map((id) => [id, document.getElementById(id)]));
 
 const SUPPORTED_COLUMNS = [
@@ -67,6 +68,7 @@ refs['refresh-data'].addEventListener('click', async () => {
   if (!confirm('ESATS data is refreshed automatically once per day. Do you want to start another full refresh now?')) return;
   await refreshEsatsData();
 });
+refs['clear-supported-filter'].addEventListener('click', () => { state.supportedFilter = null; renderTables(); });
 refs['clear-retired-filter'].addEventListener('click', () => { state.retiredFilter = null; renderTables(); });
 refs['clear-lifecycle-filter'].addEventListener('click', () => { state.lifecycleDays = null; renderTables(); });
 
@@ -92,22 +94,46 @@ async function refreshEsatsData() {
   updateProgress(0);
   refs['sync-status'].textContent = 'Refreshing ESATS data…';
   try {
+    const token = await requestEsatsToken();
     state.config = await loadConfig();
-    state.snapshot = await synchronizeEsats(state.config, { onProgress: updateProgress });
+    state.snapshot = await synchronizeEsats(state.config, { token, onProgress: updateProgress });
     applySnapshot();
     renderAll();
     setSyncStatus();
     if (state.snapshot.metadata.detailErrors) toast(`${state.snapshot.metadata.detailErrors} application detail requests were unavailable; available data was saved.`);
     else toast('ESATS daily data refresh completed.');
   } catch (error) {
-    refs['sync-status'].textContent = `Unable to refresh ESATS data: ${error.message}`;
-    toast('Refresh failed. Confirm ESATS sign-in and corporate-network access, then try again.');
+    const waitingForToken = /sign-in\/token|http 401|http 403/i.test(error.message);
+    refs['sync-status'].textContent = waitingForToken ? 'Waiting for ESATS sign-in/token.' : `Unable to refresh ESATS data: ${error.message}`;
+    toast(waitingForToken ? 'Sign in to ESATS, then use Refresh Data.' : 'Refresh failed. Confirm corporate-network access, then try again.');
     if (!state.snapshot.applications.length) renderEmptyDashboard();
   } finally {
     state.syncing = false;
     refs['refresh-data'].disabled = false;
     setTimeout(() => { refs['sync-progress'].hidden = true; }, 900);
   }
+}
+
+function requestEsatsToken() {
+  return new Promise((resolve, reject) => {
+    const requestId = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const timeout = setTimeout(() => {
+      removeEventListener('message', receive);
+      reject(new Error('Waiting for ESATS sign-in/token.'));
+    }, 5000);
+    function receive(event) {
+      if (event.source !== parent || event.origin !== 'https://esats.web.boeing.com') return;
+      const message = event.data;
+      if (message?.source !== 'aca-esats-host' || message.version !== 1 || message.type !== 'auth-token' || message.requestId !== requestId) return;
+      clearTimeout(timeout);
+      removeEventListener('message', receive);
+      const token = String(message.token ?? '').trim().replace(/^Bearer\s+/i, '');
+      if (!token) reject(new Error('Waiting for ESATS sign-in/token.'));
+      else resolve(token);
+    }
+    addEventListener('message', receive);
+    parent.postMessage({ source: 'aca-esats-dashboard', version: 1, type: 'request-auth-token', requestId }, 'https://esats.web.boeing.com');
+  });
 }
 
 function applySnapshot() {
@@ -137,12 +163,19 @@ function renderConfiguration() {
 
 function renderSummary() {
   const summary = state.summary;
-  const supportedButton = el('button', { class: 'summary-main-link', type: 'button' },
-    el('span', {}, 'Supported Applications Count'), el('strong', { class: 'primary-count' }, formatNumber(summary.supported)),
-    el('small', {}, 'Open the complete supported MO application table'),
+  const allSupported = el('button', { class: 'supported-count-button', type: 'button' },
+    el('small', {}, 'Supported applications'), el('strong', {}, formatNumber(summary.supported)), el('span', {}, 'Show all supported MO applications'),
   );
-  supportedButton.addEventListener('click', () => scrollToSection(refs['supported-table-section']));
-  const supported = el('article', { class: 'summary-card' }, supportedButton);
+  const newApplications = el('button', { class: 'supported-count-button is-new', type: 'button' },
+    el('small', {}, 'New applications'), el('strong', {}, formatNumber(summary.newApplications)), el('span', {}, 'Supported applications without an ASA'),
+  );
+  allSupported.addEventListener('click', () => applySupportedCardFilter('all'));
+  newApplications.addEventListener('click', () => applySupportedCardFilter('new'));
+  const supported = el('article', { class: 'summary-card' },
+    el('h3', {}, 'Supported Applications Count'),
+    el('p', { class: 'card-note' }, 'Click a count to filter the supported MO table.'),
+    el('div', { class: 'supported-count-grid' }, allSupported, newApplications),
+  );
 
   const maxRetired = Math.max(1, ...summary.intervals.map((item) => item.retired + item.markedForDeletion));
   const retirement = el('article', { class: 'summary-card retirement' },
@@ -163,6 +196,12 @@ function renderSummary() {
     ...summary.intervals.map((item) => lifecycleIntervalRow(item, maxLifecycle)),
   );
   refs['summary-cards'].replaceChildren(supported, retirement, lifecycle);
+}
+
+function applySupportedCardFilter(type) {
+  state.supportedFilter = type;
+  renderTables();
+  scrollToSection(refs['supported-table-section']);
 }
 
 function retirementIntervalRow(item, maximum) {
@@ -195,7 +234,8 @@ function applyRetiredCardFilter(days, eventType) {
 }
 
 function renderTables() {
-  tables.supported.setRows(state.applications);
+  const supportedRows = state.supportedFilter === 'new' ? state.summary.newRows : state.applications;
+  tables.supported.setRows(supportedRows);
   const retiredRows = state.retiredFilter
     ? retirementRowsForInterval(state.summary.retiredRows, state.retiredFilter.days, state.retiredFilter.eventType)
     : state.summary.retiredRows;
@@ -204,11 +244,20 @@ function renderTables() {
     ? rowsForInterval(state.summary.lifecycleRows, 'lifecycleChangeTimestamp', state.lifecycleDays)
     : state.summary.lifecycleRows;
   tables.lifecycle.setRows(lifecycleRows);
+  refs['clear-supported-filter'].hidden = !state.supportedFilter;
+  refs['supported-filter-label'].textContent = state.supportedFilter === 'new'
+    ? 'Card filter: New applications — supported MO applications without an Application Security Administrator (ASA).'
+    : state.supportedFilter === 'all'
+      ? 'Card selection: All supported MO applications.'
+      : 'Card filter: None — showing all supported MO applications.';
   refs['clear-retired-filter'].hidden = !state.retiredFilter;
   refs['retired-filter-label'].textContent = state.retiredFilter
-    ? `Card filter: ${state.retiredFilter.eventType === 'retired' ? 'retired' : 'marked for deletion'} in the last ${state.retiredFilter.days} days.` : '';
+    ? `Card filter: ${state.retiredFilter.eventType === 'retired' ? 'Retired applications' : 'Applications marked for deletion'} in the last ${state.retiredFilter.days} days.`
+    : 'Card filter: None — showing all retired and marked-for-deletion applications.';
   refs['clear-lifecycle-filter'].hidden = !state.lifecycleDays;
-  refs['lifecycle-filter-label'].textContent = state.lifecycleDays ? `Card filter: lifecycle changes in the last ${state.lifecycleDays} days.` : '';
+  refs['lifecycle-filter-label'].textContent = state.lifecycleDays
+    ? `Card filter: Lifecycle changes in the last ${state.lifecycleDays} days.`
+    : 'Card filter: None — showing all applications with lifecycle-change dates.';
 }
 
 function createDataTable(root, columns, filename) {

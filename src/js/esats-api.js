@@ -32,7 +32,9 @@ export function fetchApplicationContacts(esatsId, options) {
   return fetchJson(ESATS_ENDPOINTS.contacts, { esatsId }, options);
 }
 
-async function fetchJson(path, params, { signal, method = 'GET', body = null } = {}) {
+async function fetchJson(path, params, { signal, method = 'GET', body = null, token: tokenValue = '' } = {}) {
+  const token = String(tokenValue).trim().replace(/^Bearer\s+/i, '');
+  if (!token) throw new Error('Waiting for ESATS sign-in/token.');
   const url = new URL(path, API_ORIGIN);
   for (const [key, value] of Object.entries(params ?? {})) url.searchParams.set(key, value);
   let lastError;
@@ -44,7 +46,7 @@ async function fetchJson(path, params, { signal, method = 'GET', body = null } =
         method,
         credentials: 'include',
         cache: 'no-store',
-        headers: { Accept: 'application/json, text/plain, */*', ...(body ? { 'Content-Type': 'application/json' } : {}) },
+        headers: { Accept: 'application/json, text/plain, */*', Authorization: `Bearer ${token}`, ...(body ? { 'Content-Type': 'application/json' } : {}) },
         body: body ? JSON.stringify(body) : null,
         signal: combined,
       });

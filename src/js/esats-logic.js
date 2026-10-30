@@ -101,6 +101,7 @@ export function filterConfiguredEsatsApplications(applications, config) {
 }
 
 export function summarizeEsatsApplications(applications, now = new Date()) {
+  const newRows = applications.filter(isNewEsatsApplication);
   const retiredRows = applications.filter((application) => application.isRetired || application.isMarkedForDeletion);
   const lifecycleRows = applications.filter((application) => application.lifecycleChangeTimestamp != null);
   const intervals = ESATS_INTERVALS.map((days) => ({
@@ -111,6 +112,8 @@ export function summarizeEsatsApplications(applications, now = new Date()) {
   }));
   return {
     supported: applications.length,
+    newApplications: newRows.length,
+    newRows,
     retiredTotal: applications.filter((application) => application.isRetired).length,
     markedForDeletionTotal: applications.filter((application) => application.isMarkedForDeletion).length,
     markedForDeletionUndated: applications.filter((application) => application.isMarkedForDeletion && application.markedForDeletionTimestamp == null).length,
@@ -118,6 +121,12 @@ export function summarizeEsatsApplications(applications, now = new Date()) {
     lifecycleRows,
     intervals,
   };
+}
+
+export function isNewEsatsApplication(application) {
+  const administrators = application?.securityAdministrators;
+  if (Array.isArray(administrators)) return !administrators.some((value) => normalizeText(value));
+  return !normalizeText(administrators);
 }
 
 export function rowsForInterval(rows, timestampKey, days, now = new Date()) {

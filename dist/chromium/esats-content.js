@@ -25,9 +25,7 @@
     button.title = 'Open ACA-utils ESATS dashboard';
     button.setAttribute('aria-label', 'Open ACA-utils ESATS dashboard');
     button.setAttribute('aria-pressed', 'false');
-    const icon = document.createElement('span');
-    icon.className = 'aca-esats-dashboard-icon';
-    icon.setAttribute('aria-hidden', 'true');
+    const icon = createDashboardIcon();
     button.append(icon);
     button.addEventListener('click', (event) => {
       event.preventDefault();
@@ -39,6 +37,30 @@
     if (spacer?.nextSibling) topbar.insertBefore(button, spacer.nextSibling);
     else topbar.append(button);
     return true;
+  }
+
+  function createDashboardIcon() {
+    const namespace = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(namespace, 'svg');
+    svg.classList.add('aca-esats-dashboard-icon');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('aria-hidden', 'true');
+    svg.setAttribute('focusable', 'false');
+    const panel = document.createElementNS(namespace, 'rect');
+    panel.setAttribute('x', '2.5'); panel.setAttribute('y', '3'); panel.setAttribute('width', '19'); panel.setAttribute('height', '18'); panel.setAttribute('rx', '2.5');
+    panel.setAttribute('class', 'aca-icon-panel');
+    const baseline = document.createElementNS(namespace, 'path');
+    baseline.setAttribute('d', 'M6 17.5h12'); baseline.setAttribute('class', 'aca-icon-line');
+    const bars = [[6,12,2.3,4.5],[10.85,8,2.3,8.5],[15.7,10,2.3,6.5]].map(([x,y,width,height]) => {
+      const bar = document.createElementNS(namespace, 'rect');
+      bar.setAttribute('x', x); bar.setAttribute('y', y); bar.setAttribute('width', width); bar.setAttribute('height', height); bar.setAttribute('rx', '1');
+      bar.setAttribute('class', 'aca-icon-bar');
+      return bar;
+    });
+    const trend = document.createElementNS(namespace, 'path');
+    trend.setAttribute('d', 'M6 10.2 10.2 7l3.2 2 4.6-4'); trend.setAttribute('class', 'aca-icon-trend');
+    svg.append(panel, baseline, ...bars, trend);
+    return svg;
   }
 
   function createOverlay() {
@@ -80,6 +102,12 @@
   addEventListener('message', (event) => {
     if (event.source !== frame?.contentWindow || event.data?.source !== 'aca-esats-dashboard') return;
     if (event.data.type === 'close') closeDashboard();
+    if (event.data.version === 1 && event.data.type === 'request-auth-token' && typeof event.data.requestId === 'string') {
+      const token = String(localStorage.getItem('esatsToken') ?? '').trim().replace(/^Bearer\s+/i, '');
+      frame.contentWindow.postMessage({
+        source: 'aca-esats-host', version: 1, type: 'auth-token', requestId: event.data.requestId, token,
+      }, new URL(api.runtime.getURL('/')).origin);
+    }
   });
 
   addButton();

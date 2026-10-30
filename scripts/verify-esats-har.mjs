@@ -29,7 +29,11 @@ for (const contract of contracts) {
 const organizationNames = new Set(organizations.map((organization) => normalize(organization.name)));
 const missing = config.includedOrganizations.filter((name) => !organizationNames.has(normalize(name)));
 if (missing.length) throw new Error(`Configured MOs missing from ESATS contract: ${missing.join(', ')}.`);
-console.log(`Verified ${contracts.length} ESATS endpoint contracts and ${config.includedOrganizations.length} configured MO mappings.`);
+const applicationBundleEntry = entries.find((entry) => /\/main\.[^/]+\.js$/i.test(new URL(entry.request.url).pathname) && entry.response?.content?.text);
+const applicationBundle = applicationBundleEntry?.response?.content?.text ?? '';
+if (!applicationBundle.includes('esatsToken')) throw new Error('The ESATS bundle does not contain the expected esatsToken local-storage key.');
+if (!applicationBundle.includes('Authorization') || !applicationBundle.includes('Bearer ${')) throw new Error('The ESATS bundle does not contain the expected Bearer authorization interceptor.');
+console.log(`Verified ${contracts.length} ESATS endpoint contracts, Bearer-token behavior, and ${config.includedOrganizations.length} configured MO mappings.`);
 
 function normalize(value) {
   return String(value ?? '').trim().replace(/\s+/g, ' ').toLocaleLowerCase('en-US');
