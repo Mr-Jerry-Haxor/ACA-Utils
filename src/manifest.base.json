@@ -2,11 +2,13 @@
   "manifest_version": 3,
   "name": "ACA-utils",
   "version": "1.0.0",
-  "description": "Adds a supported-application compliance dashboard to the IT Compliance Scorecard.",
+  "description": "Adds separate supported-application dashboards to the IT Compliance Scorecard and ESATS.",
   "permissions": [],
   "host_permissions": [
     "https://scorecard-ui.tas-ewd.apps.boeing.com/*",
-    "https://scorecard-api.tas-ewd.apps.boeing.com/*"
+    "https://scorecard-api.tas-ewd.apps.boeing.com/*",
+    "https://esats.web.boeing.com/*",
+    "https://service-gateway.tas-phx.apps.boeing.com/*"
   ],
   "content_scripts": [
     {
@@ -14,12 +16,22 @@
       "css": ["host.css"],
       "js": ["content.js"],
       "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://esats.web.boeing.com/*"],
+      "css": ["esats-host.css"],
+      "js": ["esats-content.js"],
+      "run_at": "document_idle"
     }
   ],
   "web_accessible_resources": [
     {
       "resources": ["dashboard.html", "styles.css", "js/*.js"],
       "matches": ["https://scorecard-ui.tas-ewd.apps.boeing.com/*"]
+    },
+    {
+      "resources": ["esats-dashboard.html", "esats-styles.css", "js/*.js"],
+      "matches": ["https://esats.web.boeing.com/*"]
     }
   ],
   "content_security_policy": {

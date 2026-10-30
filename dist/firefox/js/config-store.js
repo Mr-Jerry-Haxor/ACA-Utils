@@ -1,21 +1,7 @@
 import { cloneDefaultConfig } from './default-config.js';
+import { CONFIG_STORE as STORE, openDatabase } from './db-schema.js';
 
-const DB_NAME = 'aca-compliance-dashboard';
-const DB_VERSION = 1;
-const STORE = 'configurations';
 const ACTIVE_KEY = 'active-supported-rules';
-
-function openDatabase() {
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, DB_VERSION);
-    request.onerror = () => reject(request.error);
-    request.onupgradeneeded = () => {
-      const db = request.result;
-      if (!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE, { keyPath: 'id' });
-    };
-    request.onsuccess = () => resolve(request.result);
-  });
-}
 
 async function transact(mode, operation) {
   const db = await openDatabase();

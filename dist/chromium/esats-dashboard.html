@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>ACA-utils ESATS Dashboard</title>
+  <link rel="stylesheet" href="esats-styles.css">
+</head>
+<body>
+  <div class="esats-shell">
+    <header class="esats-header">
+      <div>
+        <p class="eyebrow">ACA-utils · ESATS</p>
+        <h1>Supported Application Dashboard</h1>
+        <p id="sync-status" class="sync-status" aria-live="polite">Loading stored ESATS data…</p>
+      </div>
+      <div class="header-actions">
+        <button id="refresh-data" class="button button-primary" type="button">Refresh Data</button>
+        <button id="close-dashboard" class="button button-secondary" type="button">Close</button>
+      </div>
+    </header>
+
+    <div id="sync-progress" class="sync-progress" hidden>
+      <div class="progress-track" role="progressbar" aria-label="ESATS synchronization progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span id="progress-fill"></span></div>
+      <strong id="progress-percent">0%</strong>
+    </div>
+
+    <main>
+      <section class="config-summary" aria-labelledby="config-title">
+        <div class="section-heading">
+          <div><p class="eyebrow">Global configuration</p><h2 id="config-title">Supported MO configuration</h2></div>
+          <span id="config-count" class="count-badge"></span>
+        </div>
+        <div id="mvo-list" class="mvo-list"></div>
+      </section>
+
+      <section id="summary-cards" class="summary-cards" aria-label="ESATS summary metrics"></section>
+
+      <section id="supported-table-section" class="data-section" aria-labelledby="supported-table-title">
+        <div class="section-heading"><div><p class="eyebrow">Applications</p><h2 id="supported-table-title">Supported MO applications</h2></div></div>
+        <div id="supported-table"></div>
+      </section>
+
+      <section id="retired-table-section" class="data-section" aria-labelledby="retired-table-title">
+        <div class="section-heading"><div><p class="eyebrow">Retirement and deletion</p><h2 id="retired-table-title">Retired and marked-for-deletion applications</h2></div><button id="clear-retired-filter" class="button button-quiet" type="button" hidden>Clear card filter</button></div>
+        <p id="retired-filter-label" class="active-filter"></p>
+        <div id="retired-table"></div>
+      </section>
+
+      <section id="lifecycle-table-section" class="data-section" aria-labelledby="lifecycle-table-title">
+        <div class="section-heading"><div><p class="eyebrow">Lifecycle</p><h2 id="lifecycle-table-title">Lifecycle changes</h2></div><button id="clear-lifecycle-filter" class="button button-quiet" type="button" hidden>Clear card filter</button></div>
+        <p id="lifecycle-filter-label" class="active-filter"></p>
+        <div id="lifecycle-table"></div>
+      </section>
+    </main>
+  </div>
+  <div id="toast" class="toast" hidden role="status"></div>
+  <script type="module" src="js/esats-ui.js"></script>
+</body>
+</html>

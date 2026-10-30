@@ -1,6 +1,11 @@
 # ACA-utils
 
-A single-source WebExtension that embeds a supported-application compliance dashboard in the IT Compliance Scorecard. The build emits Chromium/Edge and Firefox variants under `dist/`.
+A single-source WebExtension with two independent in-page dashboards:
+
+- IT Compliance Scorecard supported-application compliance analytics.
+- ESATS supported-MO application, retirement, deletion, and lifecycle analytics with daily IndexedDB synchronization.
+
+The build emits Chromium/Edge and Firefox variants under `dist/`.
 
 ## Build and verify
 
