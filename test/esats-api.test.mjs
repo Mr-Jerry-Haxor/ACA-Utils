@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  fetchApplicationContacts, fetchApplicationLifecycle, fetchApplicationsForOrganization,
+  fetchApplicationContacts, fetchApplicationHistory, fetchApplicationLifecycle, fetchApplicationsForOrganization,
   fetchMaintainingOrganizations, fetchMarkedForDeletionApplications,
 } from '../src/js/esats-api.js';
 
@@ -19,12 +19,16 @@ test('every ESATS gateway request sends the local-session token as Bearer author
     await fetchMarkedForDeletionApplications(options);
     await fetchApplicationLifecycle(11622, options);
     await fetchApplicationContacts(11622, options);
+    await fetchApplicationHistory(3635513, 'SoftDelete', options);
+    await fetchApplicationHistory(3613078, 'HardDelete', options);
   } finally {
     globalThis.fetch = originalFetch;
   }
-  assert.equal(calls.length, 5);
+  assert.equal(calls.length, 7);
   assert.ok(calls.every((call) => call.options.headers.Authorization === 'Bearer test-token'));
   assert.equal(calls.find((call) => call.options.method === 'POST').options.headers['Content-Type'], 'application/json');
+  assert.ok(calls.some((call) => call.url.includes('fieldName=SoftDelete') && call.url.includes('contextRecordId=3635513')));
+  assert.ok(calls.some((call) => call.url.includes('fieldName=HardDelete') && call.url.includes('contextRecordId=3613078')));
 });
 
 test('ESATS gateway requests are rejected when no token is available', async () => {

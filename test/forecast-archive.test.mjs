@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { annualCompletionFromDue, annualDueFromCompletion, calculateArchivePoint, calculateForecastMetric, deriveArchiveStatus, mondayCheckpoints, recoveryOrientationDue } from '../src/js/forecast-archive.js';
+import { annualCompletionFromDue, annualDueFromCompletion, calculateArchivePoint, calculateForecastMetric, calculateForecastTargets, deriveArchiveStatus, mondayCheckpoints, recoveryOrientationDue } from '../src/js/forecast-archive.js';
 
 test('forecast includes at-risk renewals in target actions', () => {
   const rows = [
@@ -28,6 +28,21 @@ test('forecast reports shortfall when selected-period workload cannot reach targ
   assert.equal(result.actionsRequired, 15);
   assert.equal(result.actionsFromPeriod, 1);
   assert.equal(result.outsidePeriodShortfall, 14);
+});
+
+test('forecast target table calculates actions required from 95 through 100 percent', () => {
+  const metric = {
+    total: 100,
+    compliant: 94,
+    compliantPercent: 94,
+    rows: [{ _compliant: true, due: '2026-11-05' }, { _compliant: false, due: '2026-10-01' }],
+  };
+  const result = calculateForecastTargets(metric, (row) => new Date(`${row.due}T00:00:00`), {
+    start: new Date('2026-11-01T00:00:00'), end: new Date('2026-11-30T23:59:59'),
+    asOf: new Date('2026-11-01T00:00:00'), includeOverdueNonCompliant: true,
+  });
+  assert.equal(result.overdueNonCompliant, 1);
+  assert.deepEqual(result.actionsByTarget, { 95: 2, 96: 3, 97: 4, 98: 5, 99: 6, 100: 7 });
 });
 
 test('current forecast includes only non-compliant backlog from before the selected period', () => {

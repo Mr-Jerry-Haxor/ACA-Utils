@@ -6,6 +6,7 @@ export const ESATS_ENDPOINTS = Object.freeze({
   searchApplications: '/gateway/asset/search/SearchBusinessApplicationWithFilter',
   lifecycle: '/gateway/asset/BusinessApplicationLifecycle/GetDeploymentLifecycle',
   contacts: '/gateway/asset/BusinessApplicationSummary/GetContactDetailsSummary',
+  applicationHistory: '/gateway/statistics/BusinessApplicationHistory/GetBusinessApplicationHistoryByFieldAndContext',
 });
 
 export function fetchMaintainingOrganizations(options) {
@@ -30,6 +31,13 @@ export function fetchApplicationLifecycle(esatsId, options) {
 
 export function fetchApplicationContacts(esatsId, options) {
   return fetchJson(ESATS_ENDPOINTS.contacts, { esatsId }, options);
+}
+
+export function fetchApplicationHistory(esatsId, fieldName, options) {
+  if (!['SoftDelete', 'HardDelete'].includes(fieldName)) throw new Error('Unsupported ESATS history field.');
+  return fetchJson(ESATS_ENDPOINTS.applicationHistory, {
+    contextTypeName: 'BusinessApplication', fieldName, contextRecordId: esatsId,
+  }, options);
 }
 
 async function fetchJson(path, params, { signal, method = 'GET', body = null, token: tokenValue = '' } = {}) {

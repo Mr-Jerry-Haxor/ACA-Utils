@@ -23,6 +23,7 @@ export function calculateForecastMetric(metric, dueDateForRow, window, targetPer
     atRisk,
     dueNonCompliant,
     overdueNonCompliant,
+    baselineCount,
     targetCount,
     actionsRequired,
     actionsFromPeriod,
@@ -32,6 +33,15 @@ export function calculateForecastMetric(metric, dueDateForRow, window, targetPer
     allDueClosedPercent: percentage(allDueClosedCount, metric.total),
     targetPercent,
   };
+}
+
+export function calculateForecastTargets(metric, dueDateForRow, window, targets = [95, 96, 97, 98, 99, 100]) {
+  const base = calculateForecastMetric(metric, dueDateForRow, window, targets[0] ?? 95);
+  const actionsByTarget = Object.fromEntries(targets.map((target) => [
+    target,
+    Math.max(0, Math.ceil(metric.total * target / 100) - base.baselineCount),
+  ]));
+  return { ...base, targets: [...targets], actionsByTarget };
 }
 
 export function mondayCheckpoints(now, count = 4) {

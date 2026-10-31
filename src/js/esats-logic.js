@@ -26,7 +26,7 @@ export function filterOrganizationApplications(applications, organization, confi
   });
 }
 
-export function normalizeEsatsRecord({ application, organization, lifecycle, contacts, markedApplication, syncedAt }) {
+export function normalizeEsatsRecord({ application, organization, lifecycle, contacts, markedApplication, softDeleteHistory = [], hardDeleteHistory = [], syncedAt }) {
   const esatsId = Number(application.businessApplicationEsatsId ?? application.esatsId);
   const lifecyclePhase = phaseName(application.deploymentLifecyclePhaseType)
     || phaseName(lifecycle?.deploymentLifecyclePhaseType)
@@ -39,7 +39,8 @@ export function normalizeEsatsRecord({ application, organization, lifecycle, con
   const softDeleted = truthyFlag(application.isSoftDeleted) || Boolean(markedApplication);
   const isMarkedForDeletion = softDeleted && ['planning', 'development', 'production'].includes(normalizeText(lifecyclePhase));
   const retiredDate = firstValidDate(lifecycle?.retiredStartDate, lifecycle?.retiredStartDateString);
-  const markedDate = firstValidDate(markedApplication?.softDeletedOn);
+  const markedDate = latestEnabledHistoryDate(softDeleteHistory) ?? firstValidDate(markedApplication?.softDeletedOn);
+  const hardDeleteDate = latestEnabledHistoryDate(hardDeleteHistory) ?? firstValidDate(markedApplication?.hardDeletedOn);
   const lifecycleChangeDate = latestLifecycleDate(lifecycle);
   return {
     esatsId,
@@ -57,6 +58,8 @@ export function normalizeEsatsRecord({ application, organization, lifecycle, con
     retirementTimestamp: retiredDate?.getTime() ?? null,
     markedForDeletionDate: isoOrEmpty(markedDate),
     markedForDeletionTimestamp: markedDate?.getTime() ?? null,
+    hardDeletionDate: isoOrEmpty(hardDeleteDate),
+    hardDeletionTimestamp: hardDeleteDate?.getTime() ?? null,
     lifecycleChangeDate: isoOrEmpty(lifecycleChangeDate),
     lifecycleChangeTimestamp: lifecycleChangeDate?.getTime() ?? null,
     targetProductionDate: isoOrEmpty(firstValidDate(lifecycle?.targetProductionDate, lifecycle?.targetProductionDateString)),
@@ -79,6 +82,8 @@ export function normalizeEsatsRecord({ application, organization, lifecycle, con
     lifecycleComment: String(lifecycle?.comment ?? '').trim(),
     lifecycle: lifecycle ?? null,
     contacts: contacts ?? [],
+    softDeleteHistory,
+    hardDeleteHistory,
     sourceApplication: application,
     syncedAt,
   };
@@ -110,6 +115,11 @@ export function summarizeEsatsApplications(applications, now = new Date()) {
     markedForDeletion: applications.filter((application) => application.isMarkedForDeletion && withinLastDays(application.markedForDeletionTimestamp, days, now)).length,
     lifecycleChanges: lifecycleRows.filter((application) => withinLastDays(application.lifecycleChangeTimestamp, days, now)).length,
   }));
+  const olderThan90 = {
+    days: 90,
+    retired: applications.filter((application) => application.isRetired && olderThanDays(application.retirementTimestamp, 90, now)).length,
+    markedForDeletion: applications.filter((application) => application.isMarkedForDeletion && olderThanDays(application.markedForDeletionTimestamp, 90, now)).length,
+  };
   return {
     supported: applications.length,
     newApplications: newRows.length,
@@ -120,6 +130,7 @@ export function summarizeEsatsApplications(applications, now = new Date()) {
     retiredRows,
     lifecycleRows,
     intervals,
+    olderThan90,
   };
 }
 
@@ -134,13 +145,19 @@ export function rowsForInterval(rows, timestampKey, days, now = new Date()) {
   return rows.filter((row) => withinLastDays(row[timestampKey], days, now));
 }
 
-export function retirementRowsForInterval(rows, days, eventType = 'all', now = new Date()) {
+export function retirementRowsForInterval(rows, days, eventType = 'all', now = new Date(), olderThan = false) {
   if (!days) return rows;
   return rows.filter((row) => {
-    const retired = row.isRetired && withinLastDays(row.retirementTimestamp, days, now);
-    const marked = row.isMarkedForDeletion && withinLastDays(row.markedForDeletionTimestamp, days, now);
+    const dateMatch = olderThan ? olderThanDays : withinLastDays;
+    const retired = row.isRetired && dateMatch(row.retirementTimestamp, days, now);
+    const marked = row.isMarkedForDeletion && dateMatch(row.markedForDeletionTimestamp, days, now);
     return eventType === 'retired' ? retired : eventType === 'marked' ? marked : retired || marked;
   });
+}
+
+export function olderThanDays(timestamp, days, now = new Date()) {
+  if (!Number.isFinite(timestamp)) return false;
+  return timestamp < now.getTime() - Number(days) * 86_400_000;
 }
 
 export function withinLastDays(timestamp, days, now = new Date()) {
@@ -215,6 +232,14 @@ function firstValidDate(...values) {
     if (date) return date;
   }
   return null;
+}
+
+function latestEnabledHistoryDate(history) {
+  return (history ?? [])
+    .filter((entry) => normalizeText(entry?.changedValue) === 'y')
+    .map((entry) => parseEsatsDate(entry?.changedTime))
+    .filter(Boolean)
+    .sort((left, right) => right - left)[0] ?? null;
 }
 
 function phaseName(value) {

@@ -1,9 +1,9 @@
-import { loadConfig } from './config-store.js';
-import { displayValue, exportExcel } from './export.js';
+import { loadConfig, loadEsatsConfig, saveEsatsConfig } from './config-store.js';
+import { displayValue, exportExcel, exportJson } from './export.js';
 import { filterConfiguredEsatsApplications, retirementRowsForInterval, rowsForInterval, summarizeEsatsApplications } from './esats-logic.js';
 import { shouldRefreshEsats, synchronizeEsats } from './esats-sync.js';
 import { loadEsatsSnapshot } from './esats-store.js';
-import { applyTableState, nextSort } from './table-state.js';
+import { applyTableState, nextSort, uniqueColumnValues } from './table-state.js';
 
 const state = {
   config: null,
@@ -15,12 +15,16 @@ const state = {
   retiredFilter: null,
   lifecycleDays: null,
 };
+let activeColumnFilterPanel = null;
+let activeColumnFilterOutsideHandler = null;
 
 const refs = Object.fromEntries([
   'sync-status','refresh-data','close-dashboard','sync-progress','progress-fill','progress-percent',
   'config-count','mvo-list','summary-cards','supported-table','retired-table','lifecycle-table',
   'supported-table-section','retired-table-section','lifecycle-table-section','supported-filter-label','retired-filter-label',
-  'lifecycle-filter-label','clear-supported-filter','clear-retired-filter','clear-lifecycle-filter','toast',
+  'lifecycle-filter-label','clear-supported-filter','clear-retired-filter','clear-lifecycle-filter',
+  'config-import-input','config-import-button','config-export-button','config-copy-button',
+  'page-top','page-bottom','page-progress-ring','page-progress-value','toast',
 ].map((id) => [id, document.getElementById(id)]));
 
 const SUPPORTED_COLUMNS = [
@@ -36,7 +40,7 @@ const SUPPORTED_COLUMNS = [
   dateColumn('productionStartDate', 'Production Start'), dateColumn('retiredStartDate', 'Retired Start'),
   dateColumn('lifecycleChangeDate', 'Latest Lifecycle Change'), column('replacementSystem', 'Replacement System'),
   column('onHold', 'On Hold', yesNo), column('onHoldJustification', 'On-Hold Justification'),
-  column('lifecycleComment', 'Lifecycle Comment'), column('allContacts', 'All Contacts'),
+  column('lifecycleComment', 'Lifecycle Comment'), column('allContacts', 'All Contacts', null, { className: 'contacts-column', expandable: true }),
   column('_syncDetailStatus', 'Detail Sync Status', (_, row) => row.syncErrors?.length ? `Unavailable: ${row.syncErrors.join('; ')}` : 'Complete'),
 ];
 
@@ -44,6 +48,7 @@ const RETIRED_COLUMNS = [
   column('applicationName', 'Application'), column('esatsId', 'ESATS ID'), column('mvoName', 'Maintaining Organization'),
   column('_retirementStatus', 'Record Type', retirementStatus), column('lifecyclePhase', 'Lifecycle Phase'),
   dateColumn('retirementDate', 'Retired Date'), dateColumn('markedForDeletionDate', 'Marked Date'),
+  dateColumn('hardDeletionDate', 'Hard Delete Date'),
   column('applicationManagers', 'Application Manager'), column('applicationManagerBemsIds', 'Manager BEMS ID'),
   column('securityAdministrators', 'ASA'), column('targetRetirementDate', 'Target Retirement', formatDate),
 ];
@@ -54,6 +59,7 @@ const LIFECYCLE_COLUMNS = [
   dateColumn('planningStartDate', 'Planning Start'), dateColumn('developmentStartDate', 'Development Start'),
   dateColumn('productionStartDate', 'Production Start'), dateColumn('retiredStartDate', 'Retired Start'),
   column('applicationManagers', 'Application Manager'), column('applicationManagerBemsIds', 'Manager BEMS ID'),
+  column('securityAdministrators', 'ASA'),
   column('lifecycleComment', 'Lifecycle Comment'),
 ];
 
@@ -68,17 +74,27 @@ refs['refresh-data'].addEventListener('click', async () => {
   if (!confirm('ESATS data is refreshed automatically once per day. Do you want to start another full refresh now?')) return;
   await refreshEsatsData();
 });
+refs['config-import-button'].addEventListener('click', () => refs['config-import-input'].click());
+refs['config-import-input'].addEventListener('change', importEsatsConfiguration);
+refs['config-export-button'].addEventListener('click', () => exportJson(state.config, 'esats-supported-mo-configuration'));
+refs['config-copy-button'].addEventListener('click', copyComplianceConfiguration);
+refs['page-top'].addEventListener('click', () => scrollPageTo(0));
+refs['page-bottom'].addEventListener('click', () => scrollPageTo(document.documentElement.scrollHeight));
+addEventListener('scroll', updatePageProgress, { passive: true });
+addEventListener('resize', updatePageProgress, { passive: true });
 refs['clear-supported-filter'].addEventListener('click', () => { state.supportedFilter = null; renderTables(); });
 refs['clear-retired-filter'].addEventListener('click', () => { state.retiredFilter = null; renderTables(); });
 refs['clear-lifecycle-filter'].addEventListener('click', () => { state.lifecycleDays = null; renderTables(); });
+addEventListener('keydown', (event) => { if (event.key === 'Escape') closeColumnValueFilter(); });
+addEventListener('resize', closeColumnValueFilter, { passive: true });
 
 initialize().catch(showFatal);
 
 async function initialize() {
-  state.config = await loadConfig();
+  state.config = await loadEsatsConfig();
   state.snapshot = await loadEsatsSnapshot();
   applySnapshot();
-  if (state.snapshot.applications.length) renderAll();
+  renderAll();
   if (!shouldRefreshEsats(state.snapshot.metadata)) {
     setSyncStatus();
     return;
@@ -95,7 +111,7 @@ async function refreshEsatsData() {
   refs['sync-status'].textContent = 'Refreshing ESATS data…';
   try {
     const token = await requestEsatsToken();
-    state.config = await loadConfig();
+    state.config = await loadEsatsConfig();
     state.snapshot = await synchronizeEsats(state.config, { token, onProgress: updateProgress });
     applySnapshot();
     renderAll();
@@ -111,6 +127,35 @@ async function refreshEsatsData() {
     state.syncing = false;
     refs['refresh-data'].disabled = false;
     setTimeout(() => { refs['sync-progress'].hidden = true; }, 900);
+  }
+}
+
+async function importEsatsConfiguration() {
+  const file = refs['config-import-input'].files?.[0];
+  if (!file) return;
+  try {
+    state.config = await saveEsatsConfig(JSON.parse(await file.text()));
+    applySnapshot();
+    renderAll();
+    setSyncStatus();
+    toast('ESATS supported MO configuration imported. Use Refresh Data to fetch newly included MOs.');
+  } catch (error) {
+    toast(`ESATS configuration import failed: ${error.message}`);
+  } finally {
+    refs['config-import-input'].value = '';
+  }
+}
+
+async function copyComplianceConfiguration() {
+  if (!confirm('Replace the separate ESATS supported MO configuration with the current Compliance configuration?')) return;
+  try {
+    state.config = await saveEsatsConfig(await loadConfig());
+    applySnapshot();
+    renderAll();
+    setSyncStatus();
+    toast('Compliance configuration copied to the separate ESATS configuration. Use Refresh Data to fetch additions.');
+  } catch (error) {
+    toast(`Configuration copy failed: ${error.message}`);
   }
 }
 
@@ -145,6 +190,7 @@ function renderAll() {
   renderConfiguration();
   renderSummary();
   renderTables();
+  updatePageProgress();
 }
 
 function renderConfiguration() {
@@ -155,10 +201,28 @@ function renderConfiguration() {
   }
   const matched = new Set((state.snapshot.mvos ?? []).map((mvo) => normalize(mvo.name)));
   refs['config-count'].textContent = `${state.config.includedOrganizations.length} configured`;
-  refs['mvo-list'].replaceChildren(...state.config.includedOrganizations.map((name) => el('span', {
+  const supportedOrganizations = state.config.includedOrganizations.map((name) => el('span', {
     class: `mvo-chip${matched.has(normalize(name)) ? '' : ' is-missing'}`,
     title: matched.has(normalize(name)) ? 'Matched in the latest ESATS synchronization' : 'Not matched in the latest ESATS synchronization',
-  }, name)));
+  }, name));
+  const restrictedRules = Object.entries(state.config.restrictedOrganizations ?? {}).map(([organization, applications]) =>
+    el('article', { class: 'config-rule' }, el('h4', {}, organization), el('div', { class: 'config-value-list' }, ...applications.map(configChip))),
+  );
+  const managerExceptions = (state.config.managerExceptions ?? []).map((rule) => configChip(typeof rule === 'string' ? rule : rule?.manager));
+  const asaExceptions = (state.config.asaExceptions ?? []).map((rule) => configChip(typeof rule === 'string' ? rule : rule?.asa));
+  const applicationExceptions = (state.config.applicationExceptions ?? []).map(configChip);
+  refs['mvo-list'].replaceChildren(
+    configurationGroup('Supported MOs', supportedOrganizations, state.config.includedOrganizations.length),
+    configurationGroup('Restricted MO application rules', restrictedRules, restrictedRules.length),
+    configurationGroup('Application manager exceptions', managerExceptions, managerExceptions.length),
+    configurationGroup('ASA exceptions', asaExceptions, asaExceptions.length),
+    configurationGroup('Application exceptions', applicationExceptions, applicationExceptions.length),
+    configurationGroup('Configuration metadata', [
+      configMetadata('BEMS ID', state.config.bemsId),
+      configMetadata('Exclude blank ASA from SCMP percentage', state.config.excludeBlankAsaFromScmp ? 'Enabled' : 'Disabled'),
+      configMetadata('Last updated', formatDateTime(state.config.updatedAt)),
+    ], 3),
+  );
 }
 
 function renderSummary() {
@@ -177,11 +241,12 @@ function renderSummary() {
     el('div', { class: 'supported-count-grid' }, allSupported, newApplications),
   );
 
-  const maxRetired = Math.max(1, ...summary.intervals.map((item) => item.retired + item.markedForDeletion));
+  const maxRetired = Math.max(1, ...summary.intervals.map((item) => item.retired + item.markedForDeletion), summary.olderThan90.retired + summary.olderThan90.markedForDeletion);
   const retirement = el('article', { class: 'summary-card retirement' },
     el('h3', {}, 'Retired Applications'),
     el('p', { class: 'card-note' }, 'Click a specific count to filter the table.'),
     ...summary.intervals.map((item) => retirementIntervalRow(item, maxRetired)),
+    retirementIntervalRow({ ...summary.olderThan90, label: '90+ days', olderThan: true }, maxRetired),
     el('div', { class: 'card-footer-counts' },
       el('span', {}, 'Retired total: ', el('strong', {}, formatNumber(summary.retiredTotal))),
       el('span', {}, 'Marked total: ', el('strong', {}, formatNumber(summary.markedForDeletionTotal))),
@@ -205,11 +270,11 @@ function applySupportedCardFilter(type) {
 }
 
 function retirementIntervalRow(item, maximum) {
-  const row = el('div', { class: 'interval-row' }, el('span', { class: 'interval-label' }, `Last ${item.days} days`));
+  const row = el('div', { class: 'interval-row' }, el('span', { class: 'interval-label' }, item.label ?? `Last ${item.days} days`));
   const retired = el('button', { class: 'metric-count-button', type: 'button' }, el('small', {}, 'Retired'), el('strong', {}, formatNumber(item.retired)));
   const marked = el('button', { class: 'metric-count-button', type: 'button' }, el('small', {}, 'Marked'), el('strong', {}, formatNumber(item.markedForDeletion)));
-  retired.addEventListener('click', () => applyRetiredCardFilter(item.days, 'retired'));
-  marked.addEventListener('click', () => applyRetiredCardFilter(item.days, 'marked'));
+  retired.addEventListener('click', () => applyRetiredCardFilter(item.days, 'retired', Boolean(item.olderThan)));
+  marked.addEventListener('click', () => applyRetiredCardFilter(item.days, 'marked', Boolean(item.olderThan)));
   row.append(retired, marked, el('div', { class: 'mini-bar' }, el('i', { style: `width:${(item.retired + item.markedForDeletion) / maximum * 100}%` })));
   return row;
 }
@@ -227,8 +292,8 @@ function lifecycleIntervalRow(item, maximum) {
   return button;
 }
 
-function applyRetiredCardFilter(days, eventType) {
-  state.retiredFilter = { days, eventType };
+function applyRetiredCardFilter(days, eventType, olderThan = false) {
+  state.retiredFilter = { days, eventType, olderThan };
   renderTables();
   scrollToSection(refs['retired-table-section']);
 }
@@ -237,7 +302,7 @@ function renderTables() {
   const supportedRows = state.supportedFilter === 'new' ? state.summary.newRows : state.applications;
   tables.supported.setRows(supportedRows);
   const retiredRows = state.retiredFilter
-    ? retirementRowsForInterval(state.summary.retiredRows, state.retiredFilter.days, state.retiredFilter.eventType)
+    ? retirementRowsForInterval(state.summary.retiredRows, state.retiredFilter.days, state.retiredFilter.eventType, new Date(), state.retiredFilter.olderThan)
     : state.summary.retiredRows;
   tables.retired.setRows(retiredRows);
   const lifecycleRows = state.lifecycleDays
@@ -252,7 +317,7 @@ function renderTables() {
       : 'Card filter: None — showing all supported MO applications.';
   refs['clear-retired-filter'].hidden = !state.retiredFilter;
   refs['retired-filter-label'].textContent = state.retiredFilter
-    ? `Card filter: ${state.retiredFilter.eventType === 'retired' ? 'Retired applications' : 'Applications marked for deletion'} in the last ${state.retiredFilter.days} days.`
+    ? `Card filter: ${state.retiredFilter.eventType === 'retired' ? 'Retired applications' : 'Applications marked for deletion'} ${state.retiredFilter.olderThan ? 'older than' : 'in the last'} ${state.retiredFilter.days} days.`
     : 'Card filter: None — showing all retired and marked-for-deletion applications.';
   refs['clear-lifecycle-filter'].hidden = !state.lifecycleDays;
   refs['lifecycle-filter-label'].textContent = state.lifecycleDays
@@ -264,6 +329,7 @@ function createDataTable(root, columns, filename) {
   let rows = [];
   let globalSearch = '';
   let columnSearches = {};
+  let columnSelections = {};
   let sort = null;
   let page = 1;
   let pageSize = 10;
@@ -275,7 +341,7 @@ function createDataTable(root, columns, filename) {
   }
 
   function render(focusKey = '', cursor = null) {
-    const processed = applyTableState(rows, columns, { globalSearch, columnSearches, sort });
+    const processed = applyTableState(rows, columns, { globalSearch, columnSearches, columnSelections, sort });
     const pageCount = Math.max(1, Math.ceil(processed.length / pageSize));
     page = Math.min(page, pageCount);
     const pageRows = processed.slice((page - 1) * pageSize, page * pageSize);
@@ -284,36 +350,67 @@ function createDataTable(root, columns, filename) {
     globalInput.addEventListener('input', () => { globalSearch = globalInput.value; page = 1; render('global', globalInput.selectionStart); });
     const pageSizeSelect = el('select', { class: 'page-size-select', 'aria-label': 'Rows per page' }, ...[10,25,50,100].map((size) => el('option', { value: size, selected: size === pageSize }, `${size} rows`)));
     pageSizeSelect.addEventListener('change', () => { pageSize = Number(pageSizeSelect.value); page = 1; render(); });
+    const hasTableFilters = Boolean(globalSearch.trim())
+      || Object.values(columnSearches).some((value) => String(value).trim())
+      || Object.keys(columnSelections).length > 0;
+    const clearFiltersButton = el('button', { class: 'button button-quiet', type: 'button', hidden: !hasTableFilters }, 'Clear all filters');
+    clearFiltersButton.addEventListener('click', () => {
+      globalSearch = '';
+      columnSearches = {};
+      columnSelections = {};
+      page = 1;
+      closeColumnValueFilter();
+      render();
+    });
     const exportButton = el('button', { class: 'button button-secondary', type: 'button' }, 'Export Excel');
     exportButton.addEventListener('click', () => exportExcel(processed, columns, filename));
     const toolbar = el('div', { class: 'table-toolbar' },
       globalInput,
-      el('div', { class: 'toolbar-group' }, el('span', { class: 'table-count' }, `${formatNumber(processed.length)} of ${formatNumber(rows.length)} records`), pageSizeSelect, exportButton),
+      el('div', { class: 'toolbar-group' }, el('span', { class: 'table-count' }, `${formatNumber(processed.length)} of ${formatNumber(rows.length)} records`), pageSizeSelect, clearFiltersButton, exportButton),
     );
+    const filterSummary = el('div', { class: 'table-filter-summary' }, describeTableFilters(columns, globalSearch, columnSearches, columnSelections));
 
     const heading = el('tr', { class: 'heading-row' }, ...columns.map((column, index) => {
       const indicator = sort?.columnIndex === index ? (sort.direction === 'asc' ? '▲' : '▼') : '↕';
-      const button = el('button', { class: 'sort-button', type: 'button' }, el('span', {}, column.label), el('span', {}, indicator));
-      button.addEventListener('click', () => { sort = nextSort(sort, index); render(); });
-      return el('th', { scope: 'col' }, button);
+      const sortButton = el('button', { class: 'sort-button', type: 'button' }, el('span', {}, column.label), el('span', {}, indicator));
+      sortButton.addEventListener('click', () => { sort = nextSort(sort, index); render(); });
+      const valueFilterButton = el('button', {
+        class: `column-value-filter-button${Object.hasOwn(columnSelections, index) ? ' is-filtered' : ''}`,
+        type: 'button', title: `Filter ${column.label} by value`, 'aria-label': `Filter ${column.label} by value`,
+      }, '▾');
+      valueFilterButton.addEventListener('click', (event) => {
+        event.stopPropagation();
+        openColumnValueFilter({
+          anchor: valueFilterButton,
+          rows,
+          column,
+          selected: columnSelections[index],
+          onApply(selection) {
+            if (selection == null) delete columnSelections[index];
+            else columnSelections[index] = selection;
+            page = 1;
+            render();
+          },
+        });
+      });
+      return el('th', { scope: 'col', class: column.className ?? '' }, el('div', { class: 'column-heading-control' }, sortButton, valueFilterButton));
     }));
     const filters = el('tr', { class: 'filter-row' }, ...columns.map((column, index) => {
       const input = el('input', { class: 'column-search', type: 'search', value: columnSearches[index] ?? '', placeholder: `Filter ${column.label}`, 'aria-label': `Filter ${column.label}`, 'data-focus-key': `column-${index}` });
       input.addEventListener('input', () => { columnSearches[index] = input.value; page = 1; render(`column-${index}`, input.selectionStart); });
-      return el('th', {}, input);
+      return el('th', { class: column.className ?? '' }, input);
     }));
-    const body = el('tbody', {}, ...pageRows.map((row) =>
-      el('tr', {}, ...columns.map((column) => el('td', {}, displayValue(row, column)))),
-    ));
-    const tableContent = pageRows.length
-      ? el('div', { class: 'table-scroll' }, el('table', {}, el('thead', {}, heading, filters), body))
-      : el('div', { class: 'empty-state' }, 'No records match the current filters.');
+    const bodyRows = pageRows.length
+      ? pageRows.map((row) => el('tr', {}, ...columns.map((column) => renderTableCell(row, column))))
+      : [el('tr', { class: 'table-empty-row' }, el('td', { colspan: columns.length }, 'No records match the current filters.'))];
+    const body = el('tbody', {}, ...bodyRows);
+    const tableContent = el('div', { class: 'table-scroll' }, el('table', {}, el('thead', {}, heading, filters), body));
     const previous = el('button', { class: 'page-button', type: 'button', disabled: page <= 1 }, 'Previous');
     const next = el('button', { class: 'page-button', type: 'button', disabled: page >= pageCount }, 'Next');
     previous.addEventListener('click', () => { page -= 1; render(); });
     next.addEventListener('click', () => { page += 1; render(); });
     const pagination = el('div', { class: 'pagination' }, previous, el('span', { class: 'table-count' }, `Page ${page} of ${pageCount}`), next);
-    root.replaceChildren(toolbar, tableContent, pagination);
+    root.replaceChildren(toolbar, filterSummary, tableContent, pagination);
     if (focusKey) {
       const target = root.querySelector(`[data-focus-key="${focusKey}"]`);
       target?.focus();
@@ -321,6 +418,112 @@ function createDataTable(root, columns, filename) {
     }
   }
   return { setRows };
+}
+
+function renderTableCell(row, column) {
+  const value = displayValue(row, column);
+  const cell = el('td', { class: column.className ?? '' });
+  if (!column.expandable) {
+    cell.textContent = value;
+    return cell;
+  }
+  const wrapper = el('div', { class: 'expandable-cell' }, el('span', { class: 'expandable-cell-text' }, value));
+  if (value.length > 110) {
+    const button = el('button', { class: 'expand-cell-button', type: 'button', 'aria-expanded': 'false' }, 'Expand contacts');
+    button.addEventListener('click', () => {
+      const expanded = wrapper.classList.toggle('is-expanded');
+      cell.classList.toggle('is-expanded', expanded);
+      button.textContent = expanded ? 'Collapse contacts' : 'Expand contacts';
+      button.setAttribute('aria-expanded', String(expanded));
+    });
+    wrapper.append(button);
+  }
+  cell.append(wrapper);
+  return cell;
+}
+
+function describeTableFilters(columns, globalSearch, columnSearches, columnSelections) {
+  const conditions = [];
+  if (globalSearch.trim()) conditions.push(`Search contains “${globalSearch.trim()}”`);
+  for (const [index, value] of Object.entries(columnSearches)) {
+    if (String(value).trim()) conditions.push(`${columns[index]?.label ?? 'Column'} contains “${String(value).trim()}”`);
+  }
+  for (const [index, selection] of Object.entries(columnSelections)) {
+    conditions.push(`${columns[index]?.label ?? 'Column'} has ${selection.size} selected value${selection.size === 1 ? '' : 's'}`);
+  }
+  return conditions.length ? `Active table filters: ${conditions.join(' · ')}` : 'Active table filters: None.';
+}
+
+function openColumnValueFilter({ anchor, rows, column, selected, onApply }) {
+  closeColumnValueFilter();
+  const values = uniqueColumnValues(rows, column);
+  const allKeys = new Set(values.map((item) => item.key));
+  const working = new Set(selected instanceof Set ? selected : allKeys);
+  const panel = el('section', { class: 'column-value-filter-panel', role: 'dialog', 'aria-label': `Filter ${column.label} values` });
+  const search = el('input', { class: 'column-value-search', type: 'search', placeholder: 'Search values…', 'aria-label': `Search ${column.label} values` });
+  const selectAll = el('input', { type: 'checkbox' });
+  const selectAllLabel = el('label', { class: 'column-value-select-all' }, selectAll, el('span', {}, 'Select all visible values'));
+  const list = el('div', { class: 'column-value-list' });
+
+  function matchingValues() {
+    const term = normalize(search.value);
+    return term ? values.filter((item) => normalize(item.label).includes(term)) : values;
+  }
+  function renderValues() {
+    const visible = matchingValues();
+    selectAll.checked = visible.length > 0 && visible.every((item) => working.has(item.key));
+    selectAll.indeterminate = visible.some((item) => working.has(item.key)) && !selectAll.checked;
+    list.replaceChildren(...visible.map((item) => {
+      const checkbox = el('input', { type: 'checkbox' });
+      checkbox.checked = working.has(item.key);
+      checkbox.addEventListener('change', () => {
+        if (checkbox.checked) working.add(item.key); else working.delete(item.key);
+        renderValues();
+      });
+      return el('label', { class: 'column-value-option' }, checkbox, el('span', { title: item.label }, item.label));
+    }));
+    if (!visible.length) list.append(el('div', { class: 'column-value-empty' }, 'No values match the search.'));
+  }
+  search.addEventListener('input', renderValues);
+  selectAll.addEventListener('change', () => {
+    for (const item of matchingValues()) {
+      if (selectAll.checked) working.add(item.key); else working.delete(item.key);
+    }
+    renderValues();
+  });
+  const clear = el('button', { class: 'button button-quiet', type: 'button' }, 'Clear filter');
+  const cancel = el('button', { class: 'button button-secondary', type: 'button' }, 'Cancel');
+  const apply = el('button', { class: 'button button-primary', type: 'button' }, 'Apply');
+  clear.addEventListener('click', () => { closeColumnValueFilter(); onApply(null); });
+  cancel.addEventListener('click', closeColumnValueFilter);
+  apply.addEventListener('click', () => {
+    const selection = working.size === allKeys.size && [...allKeys].every((key) => working.has(key)) ? null : new Set(working);
+    closeColumnValueFilter();
+    onApply(selection);
+  });
+  panel.append(el('strong', {}, column.label), search, selectAllLabel, list, el('div', { class: 'column-value-actions' }, clear, cancel, apply));
+  renderValues();
+  document.body.append(panel);
+  activeColumnFilterPanel = panel;
+  const rect = anchor.getBoundingClientRect();
+  const panelRect = panel.getBoundingClientRect();
+  panel.style.left = `${Math.max(8, Math.min(rect.left, innerWidth - panelRect.width - 8))}px`;
+  panel.style.top = `${Math.max(8, Math.min(rect.bottom + 5, innerHeight - panelRect.height - 8))}px`;
+  search.focus();
+  const outsideHandler = (event) => {
+    if (!panel.contains(event.target) && event.target !== anchor) closeColumnValueFilter();
+  };
+  activeColumnFilterOutsideHandler = outsideHandler;
+  setTimeout(() => {
+    if (activeColumnFilterPanel === panel) addEventListener('pointerdown', outsideHandler);
+  }, 0);
+}
+
+function closeColumnValueFilter() {
+  if (activeColumnFilterOutsideHandler) removeEventListener('pointerdown', activeColumnFilterOutsideHandler);
+  activeColumnFilterOutsideHandler = null;
+  activeColumnFilterPanel?.remove();
+  activeColumnFilterPanel = null;
 }
 
 function setSyncStatus() {
@@ -357,6 +560,18 @@ function scrollToSection(section) {
   section.querySelector('input,button')?.focus({ preventScroll: true });
 }
 
+function scrollPageTo(top) {
+  scrollTo({ top, behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+}
+
+function updatePageProgress() {
+  const maximum = Math.max(1, document.documentElement.scrollHeight - innerHeight);
+  const percent = Math.min(100, Math.max(0, Math.round(scrollY / maximum * 100)));
+  refs['page-progress-ring'].style.setProperty('--page-progress', `${percent * 3.6}deg`);
+  refs['page-progress-ring'].setAttribute('aria-valuenow', String(percent));
+  refs['page-progress-value'].textContent = `${percent}%`;
+}
+
 function toast(message) {
   refs.toast.textContent = message;
   refs.toast.hidden = false;
@@ -364,7 +579,16 @@ function toast(message) {
   toast.timer = setTimeout(() => { refs.toast.hidden = true; }, 5000);
 }
 
-function column(key, label, value = null) { return { key, label, ...(value ? { value: (row) => value(row[key], row) } : {}) }; }
+function configurationGroup(label, content, count) {
+  const body = content.length ? content : [el('p', { class: 'config-empty' }, 'None configured.')];
+  return el('details', { class: 'config-group' },
+    el('summary', {}, el('span', {}, label), el('strong', {}, formatNumber(count))),
+    el('div', { class: 'config-group-content' }, ...body),
+  );
+}
+function configChip(value) { return el('span', { class: 'config-chip' }, String(value ?? '').trim()); }
+function configMetadata(label, value) { return el('div', { class: 'config-metadata-row' }, el('span', {}, label), el('strong', {}, value || 'Not available')); }
+function column(key, label, value = null, options = {}) { return { key, label, ...options, ...(value ? { value: (row) => value(row[key], row) } : {}) }; }
 function dateColumn(key, label) { return column(key, label, formatDate); }
 function yesNo(value) { return value ? 'Yes' : 'No'; }
 function retirementStatus(_, row) { return row.isRetired && row.isMarkedForDeletion ? 'Retired and marked for deletion' : row.isRetired ? 'Retired' : 'Marked for deletion'; }
@@ -373,6 +597,7 @@ function formatDate(value) {
   return new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(value));
 }
 function formatDateTime(value) {
+  if (!value || Number.isNaN(Date.parse(value))) return 'Not available';
   return new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }).format(new Date(value)) + ' IST';
 }
 function formatNumber(value) { return new Intl.NumberFormat('en-IN').format(value); }

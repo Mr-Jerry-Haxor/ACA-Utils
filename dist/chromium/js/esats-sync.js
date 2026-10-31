@@ -1,4 +1,4 @@
-import { fetchApplicationContacts, fetchApplicationLifecycle, fetchApplicationsForOrganization, fetchMaintainingOrganizations, fetchMarkedForDeletionApplications } from './esats-api.js';
+import { fetchApplicationContacts, fetchApplicationHistory, fetchApplicationLifecycle, fetchApplicationsForOrganization, fetchMaintainingOrganizations, fetchMarkedForDeletionApplications } from './esats-api.js';
 import { filterConfiguredEsatsApplications, filterOrganizationApplications, matchSupportedOrganizations, normalizeEsatsRecord } from './esats-logic.js';
 import { saveEsatsSnapshot } from './esats-store.js';
 
@@ -30,7 +30,8 @@ export async function synchronizeEsats(config, { signal, token, onProgress = () 
     if (Number.isFinite(esatsId) && !candidatesById.has(esatsId)) candidatesById.set(esatsId, candidate);
   }
   const candidates = [...candidatesById.values()];
-  const totalDetailRequests = Math.max(1, candidates.length * 2);
+  const historyCandidateIds = new Set(candidates.filter(({ application }) => isDeletionCandidate(application, markedById)).map(({ application }) => Number(application.businessApplicationEsatsId ?? application.esatsId)));
+  const totalDetailRequests = Math.max(1, candidates.length * 2 + historyCandidateIds.size * 2);
   let completedDetailRequests = 0;
   let detailErrors = 0;
   const syncedAt = new Date().toISOString();
@@ -49,9 +50,12 @@ export async function synchronizeEsats(config, { signal, token, onProgress = () 
         onProgress(20 + Math.round(completedDetailRequests / totalDetailRequests * 79));
       }
     };
-    const [lifecycleResult, contactsResult] = await Promise.all([
+    const needsDeletionHistory = historyCandidateIds.has(esatsId);
+    const [lifecycleResult, contactsResult, softDeleteResult, hardDeleteResult] = await Promise.all([
       tracked(() => fetchApplicationLifecycle(esatsId, { signal, token })),
       tracked(() => fetchApplicationContacts(esatsId, { signal, token })),
+      needsDeletionHistory ? tracked(() => fetchApplicationHistory(esatsId, 'SoftDelete', { signal, token })) : Promise.resolve([]),
+      needsDeletionHistory ? tracked(() => fetchApplicationHistory(esatsId, 'HardDelete', { signal, token })) : Promise.resolve([]),
     ]);
     const lifecycle = lifecycleResult?.__syncError ? null : lifecycleResult;
     const contacts = contactsResult?.__syncError ? [] : contactsResult;
@@ -61,9 +65,11 @@ export async function synchronizeEsats(config, { signal, token, onProgress = () 
       lifecycle,
       contacts: Array.isArray(contacts) ? contacts : [],
       markedApplication: markedById.get(esatsId),
+      softDeleteHistory: Array.isArray(softDeleteResult) ? softDeleteResult : [],
+      hardDeleteHistory: Array.isArray(hardDeleteResult) ? hardDeleteResult : [],
       syncedAt,
     });
-    record.syncErrors = [lifecycleResult?.__syncError, contactsResult?.__syncError].filter(Boolean);
+    record.syncErrors = [lifecycleResult?.__syncError, contactsResult?.__syncError, softDeleteResult?.__syncError, hardDeleteResult?.__syncError].filter(Boolean);
     return record;
   });
 
@@ -91,6 +97,12 @@ export async function synchronizeEsats(config, { signal, token, onProgress = () 
   await saveEsatsSnapshot({ applications, mvos, metadata });
   onProgress(100);
   return { applications, mvos, metadata };
+}
+
+function isDeletionCandidate(application, markedById) {
+  const esatsId = Number(application.businessApplicationEsatsId ?? application.esatsId);
+  if (markedById.has(esatsId)) return true;
+  return ['y', 'yes', 'true', '1'].includes(String(application.isSoftDeleted ?? '').trim().toLocaleLowerCase('en-US'));
 }
 
 export function istDateKey(date = new Date()) {

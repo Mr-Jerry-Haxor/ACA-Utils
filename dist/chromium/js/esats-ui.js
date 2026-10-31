@@ -1,5 +1,5 @@
-import { loadConfig } from './config-store.js';
-import { displayValue, exportExcel } from './export.js';
+import { loadConfig, loadEsatsConfig, saveEsatsConfig } from './config-store.js';
+import { displayValue, exportExcel, exportJson } from './export.js';
 import { filterConfiguredEsatsApplications, retirementRowsForInterval, rowsForInterval, summarizeEsatsApplications } from './esats-logic.js';
 import { shouldRefreshEsats, synchronizeEsats } from './esats-sync.js';
 import { loadEsatsSnapshot } from './esats-store.js';
@@ -22,7 +22,9 @@ const refs = Object.fromEntries([
   'sync-status','refresh-data','close-dashboard','sync-progress','progress-fill','progress-percent',
   'config-count','mvo-list','summary-cards','supported-table','retired-table','lifecycle-table',
   'supported-table-section','retired-table-section','lifecycle-table-section','supported-filter-label','retired-filter-label',
-  'lifecycle-filter-label','clear-supported-filter','clear-retired-filter','clear-lifecycle-filter','toast',
+  'lifecycle-filter-label','clear-supported-filter','clear-retired-filter','clear-lifecycle-filter',
+  'config-import-input','config-import-button','config-export-button','config-copy-button',
+  'page-top','page-bottom','page-progress-ring','page-progress-value','toast',
 ].map((id) => [id, document.getElementById(id)]));
 
 const SUPPORTED_COLUMNS = [
@@ -46,6 +48,7 @@ const RETIRED_COLUMNS = [
   column('applicationName', 'Application'), column('esatsId', 'ESATS ID'), column('mvoName', 'Maintaining Organization'),
   column('_retirementStatus', 'Record Type', retirementStatus), column('lifecyclePhase', 'Lifecycle Phase'),
   dateColumn('retirementDate', 'Retired Date'), dateColumn('markedForDeletionDate', 'Marked Date'),
+  dateColumn('hardDeletionDate', 'Hard Delete Date'),
   column('applicationManagers', 'Application Manager'), column('applicationManagerBemsIds', 'Manager BEMS ID'),
   column('securityAdministrators', 'ASA'), column('targetRetirementDate', 'Target Retirement', formatDate),
 ];
@@ -56,6 +59,7 @@ const LIFECYCLE_COLUMNS = [
   dateColumn('planningStartDate', 'Planning Start'), dateColumn('developmentStartDate', 'Development Start'),
   dateColumn('productionStartDate', 'Production Start'), dateColumn('retiredStartDate', 'Retired Start'),
   column('applicationManagers', 'Application Manager'), column('applicationManagerBemsIds', 'Manager BEMS ID'),
+  column('securityAdministrators', 'ASA'),
   column('lifecycleComment', 'Lifecycle Comment'),
 ];
 
@@ -70,6 +74,14 @@ refs['refresh-data'].addEventListener('click', async () => {
   if (!confirm('ESATS data is refreshed automatically once per day. Do you want to start another full refresh now?')) return;
   await refreshEsatsData();
 });
+refs['config-import-button'].addEventListener('click', () => refs['config-import-input'].click());
+refs['config-import-input'].addEventListener('change', importEsatsConfiguration);
+refs['config-export-button'].addEventListener('click', () => exportJson(state.config, 'esats-supported-mo-configuration'));
+refs['config-copy-button'].addEventListener('click', copyComplianceConfiguration);
+refs['page-top'].addEventListener('click', () => scrollPageTo(0));
+refs['page-bottom'].addEventListener('click', () => scrollPageTo(document.documentElement.scrollHeight));
+addEventListener('scroll', updatePageProgress, { passive: true });
+addEventListener('resize', updatePageProgress, { passive: true });
 refs['clear-supported-filter'].addEventListener('click', () => { state.supportedFilter = null; renderTables(); });
 refs['clear-retired-filter'].addEventListener('click', () => { state.retiredFilter = null; renderTables(); });
 refs['clear-lifecycle-filter'].addEventListener('click', () => { state.lifecycleDays = null; renderTables(); });
@@ -79,10 +91,10 @@ addEventListener('resize', closeColumnValueFilter, { passive: true });
 initialize().catch(showFatal);
 
 async function initialize() {
-  state.config = await loadConfig();
+  state.config = await loadEsatsConfig();
   state.snapshot = await loadEsatsSnapshot();
   applySnapshot();
-  if (state.snapshot.applications.length) renderAll();
+  renderAll();
   if (!shouldRefreshEsats(state.snapshot.metadata)) {
     setSyncStatus();
     return;
@@ -99,7 +111,7 @@ async function refreshEsatsData() {
   refs['sync-status'].textContent = 'Refreshing ESATS data…';
   try {
     const token = await requestEsatsToken();
-    state.config = await loadConfig();
+    state.config = await loadEsatsConfig();
     state.snapshot = await synchronizeEsats(state.config, { token, onProgress: updateProgress });
     applySnapshot();
     renderAll();
@@ -115,6 +127,35 @@ async function refreshEsatsData() {
     state.syncing = false;
     refs['refresh-data'].disabled = false;
     setTimeout(() => { refs['sync-progress'].hidden = true; }, 900);
+  }
+}
+
+async function importEsatsConfiguration() {
+  const file = refs['config-import-input'].files?.[0];
+  if (!file) return;
+  try {
+    state.config = await saveEsatsConfig(JSON.parse(await file.text()));
+    applySnapshot();
+    renderAll();
+    setSyncStatus();
+    toast('ESATS supported MO configuration imported. Use Refresh Data to fetch newly included MOs.');
+  } catch (error) {
+    toast(`ESATS configuration import failed: ${error.message}`);
+  } finally {
+    refs['config-import-input'].value = '';
+  }
+}
+
+async function copyComplianceConfiguration() {
+  if (!confirm('Replace the separate ESATS supported MO configuration with the current Compliance configuration?')) return;
+  try {
+    state.config = await saveEsatsConfig(await loadConfig());
+    applySnapshot();
+    renderAll();
+    setSyncStatus();
+    toast('Compliance configuration copied to the separate ESATS configuration. Use Refresh Data to fetch additions.');
+  } catch (error) {
+    toast(`Configuration copy failed: ${error.message}`);
   }
 }
 
@@ -149,6 +190,7 @@ function renderAll() {
   renderConfiguration();
   renderSummary();
   renderTables();
+  updatePageProgress();
 }
 
 function renderConfiguration() {
@@ -199,11 +241,12 @@ function renderSummary() {
     el('div', { class: 'supported-count-grid' }, allSupported, newApplications),
   );
 
-  const maxRetired = Math.max(1, ...summary.intervals.map((item) => item.retired + item.markedForDeletion));
+  const maxRetired = Math.max(1, ...summary.intervals.map((item) => item.retired + item.markedForDeletion), summary.olderThan90.retired + summary.olderThan90.markedForDeletion);
   const retirement = el('article', { class: 'summary-card retirement' },
     el('h3', {}, 'Retired Applications'),
     el('p', { class: 'card-note' }, 'Click a specific count to filter the table.'),
     ...summary.intervals.map((item) => retirementIntervalRow(item, maxRetired)),
+    retirementIntervalRow({ ...summary.olderThan90, label: '90+ days', olderThan: true }, maxRetired),
     el('div', { class: 'card-footer-counts' },
       el('span', {}, 'Retired total: ', el('strong', {}, formatNumber(summary.retiredTotal))),
       el('span', {}, 'Marked total: ', el('strong', {}, formatNumber(summary.markedForDeletionTotal))),
@@ -227,11 +270,11 @@ function applySupportedCardFilter(type) {
 }
 
 function retirementIntervalRow(item, maximum) {
-  const row = el('div', { class: 'interval-row' }, el('span', { class: 'interval-label' }, `Last ${item.days} days`));
+  const row = el('div', { class: 'interval-row' }, el('span', { class: 'interval-label' }, item.label ?? `Last ${item.days} days`));
   const retired = el('button', { class: 'metric-count-button', type: 'button' }, el('small', {}, 'Retired'), el('strong', {}, formatNumber(item.retired)));
   const marked = el('button', { class: 'metric-count-button', type: 'button' }, el('small', {}, 'Marked'), el('strong', {}, formatNumber(item.markedForDeletion)));
-  retired.addEventListener('click', () => applyRetiredCardFilter(item.days, 'retired'));
-  marked.addEventListener('click', () => applyRetiredCardFilter(item.days, 'marked'));
+  retired.addEventListener('click', () => applyRetiredCardFilter(item.days, 'retired', Boolean(item.olderThan)));
+  marked.addEventListener('click', () => applyRetiredCardFilter(item.days, 'marked', Boolean(item.olderThan)));
   row.append(retired, marked, el('div', { class: 'mini-bar' }, el('i', { style: `width:${(item.retired + item.markedForDeletion) / maximum * 100}%` })));
   return row;
 }
@@ -249,8 +292,8 @@ function lifecycleIntervalRow(item, maximum) {
   return button;
 }
 
-function applyRetiredCardFilter(days, eventType) {
-  state.retiredFilter = { days, eventType };
+function applyRetiredCardFilter(days, eventType, olderThan = false) {
+  state.retiredFilter = { days, eventType, olderThan };
   renderTables();
   scrollToSection(refs['retired-table-section']);
 }
@@ -259,7 +302,7 @@ function renderTables() {
   const supportedRows = state.supportedFilter === 'new' ? state.summary.newRows : state.applications;
   tables.supported.setRows(supportedRows);
   const retiredRows = state.retiredFilter
-    ? retirementRowsForInterval(state.summary.retiredRows, state.retiredFilter.days, state.retiredFilter.eventType)
+    ? retirementRowsForInterval(state.summary.retiredRows, state.retiredFilter.days, state.retiredFilter.eventType, new Date(), state.retiredFilter.olderThan)
     : state.summary.retiredRows;
   tables.retired.setRows(retiredRows);
   const lifecycleRows = state.lifecycleDays
@@ -274,7 +317,7 @@ function renderTables() {
       : 'Card filter: None — showing all supported MO applications.';
   refs['clear-retired-filter'].hidden = !state.retiredFilter;
   refs['retired-filter-label'].textContent = state.retiredFilter
-    ? `Card filter: ${state.retiredFilter.eventType === 'retired' ? 'Retired applications' : 'Applications marked for deletion'} in the last ${state.retiredFilter.days} days.`
+    ? `Card filter: ${state.retiredFilter.eventType === 'retired' ? 'Retired applications' : 'Applications marked for deletion'} ${state.retiredFilter.olderThan ? 'older than' : 'in the last'} ${state.retiredFilter.days} days.`
     : 'Card filter: None — showing all retired and marked-for-deletion applications.';
   refs['clear-lifecycle-filter'].hidden = !state.lifecycleDays;
   refs['lifecycle-filter-label'].textContent = state.lifecycleDays
@@ -307,11 +350,23 @@ function createDataTable(root, columns, filename) {
     globalInput.addEventListener('input', () => { globalSearch = globalInput.value; page = 1; render('global', globalInput.selectionStart); });
     const pageSizeSelect = el('select', { class: 'page-size-select', 'aria-label': 'Rows per page' }, ...[10,25,50,100].map((size) => el('option', { value: size, selected: size === pageSize }, `${size} rows`)));
     pageSizeSelect.addEventListener('change', () => { pageSize = Number(pageSizeSelect.value); page = 1; render(); });
+    const hasTableFilters = Boolean(globalSearch.trim())
+      || Object.values(columnSearches).some((value) => String(value).trim())
+      || Object.keys(columnSelections).length > 0;
+    const clearFiltersButton = el('button', { class: 'button button-quiet', type: 'button', hidden: !hasTableFilters }, 'Clear all filters');
+    clearFiltersButton.addEventListener('click', () => {
+      globalSearch = '';
+      columnSearches = {};
+      columnSelections = {};
+      page = 1;
+      closeColumnValueFilter();
+      render();
+    });
     const exportButton = el('button', { class: 'button button-secondary', type: 'button' }, 'Export Excel');
     exportButton.addEventListener('click', () => exportExcel(processed, columns, filename));
     const toolbar = el('div', { class: 'table-toolbar' },
       globalInput,
-      el('div', { class: 'toolbar-group' }, el('span', { class: 'table-count' }, `${formatNumber(processed.length)} of ${formatNumber(rows.length)} records`), pageSizeSelect, exportButton),
+      el('div', { class: 'toolbar-group' }, el('span', { class: 'table-count' }, `${formatNumber(processed.length)} of ${formatNumber(rows.length)} records`), pageSizeSelect, clearFiltersButton, exportButton),
     );
     const filterSummary = el('div', { class: 'table-filter-summary' }, describeTableFilters(columns, globalSearch, columnSearches, columnSelections));
 
@@ -345,12 +400,11 @@ function createDataTable(root, columns, filename) {
       input.addEventListener('input', () => { columnSearches[index] = input.value; page = 1; render(`column-${index}`, input.selectionStart); });
       return el('th', { class: column.className ?? '' }, input);
     }));
-    const body = el('tbody', {}, ...pageRows.map((row) =>
-      el('tr', {}, ...columns.map((column) => renderTableCell(row, column))),
-    ));
-    const tableContent = pageRows.length
-      ? el('div', { class: 'table-scroll' }, el('table', {}, el('thead', {}, heading, filters), body))
-      : el('div', { class: 'empty-state' }, 'No records match the current filters.');
+    const bodyRows = pageRows.length
+      ? pageRows.map((row) => el('tr', {}, ...columns.map((column) => renderTableCell(row, column))))
+      : [el('tr', { class: 'table-empty-row' }, el('td', { colspan: columns.length }, 'No records match the current filters.'))];
+    const body = el('tbody', {}, ...bodyRows);
+    const tableContent = el('div', { class: 'table-scroll' }, el('table', {}, el('thead', {}, heading, filters), body));
     const previous = el('button', { class: 'page-button', type: 'button', disabled: page <= 1 }, 'Previous');
     const next = el('button', { class: 'page-button', type: 'button', disabled: page >= pageCount }, 'Next');
     previous.addEventListener('click', () => { page -= 1; render(); });
@@ -456,10 +510,13 @@ function openColumnValueFilter({ anchor, rows, column, selected, onApply }) {
   panel.style.left = `${Math.max(8, Math.min(rect.left, innerWidth - panelRect.width - 8))}px`;
   panel.style.top = `${Math.max(8, Math.min(rect.bottom + 5, innerHeight - panelRect.height - 8))}px`;
   search.focus();
-  activeColumnFilterOutsideHandler = (event) => {
+  const outsideHandler = (event) => {
     if (!panel.contains(event.target) && event.target !== anchor) closeColumnValueFilter();
   };
-  setTimeout(() => addEventListener('pointerdown', activeColumnFilterOutsideHandler), 0);
+  activeColumnFilterOutsideHandler = outsideHandler;
+  setTimeout(() => {
+    if (activeColumnFilterPanel === panel) addEventListener('pointerdown', outsideHandler);
+  }, 0);
 }
 
 function closeColumnValueFilter() {
@@ -501,6 +558,18 @@ function showFatal(error) {
 function scrollToSection(section) {
   section.scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' });
   section.querySelector('input,button')?.focus({ preventScroll: true });
+}
+
+function scrollPageTo(top) {
+  scrollTo({ top, behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+}
+
+function updatePageProgress() {
+  const maximum = Math.max(1, document.documentElement.scrollHeight - innerHeight);
+  const percent = Math.min(100, Math.max(0, Math.round(scrollY / maximum * 100)));
+  refs['page-progress-ring'].style.setProperty('--page-progress', `${percent * 3.6}deg`);
+  refs['page-progress-ring'].setAttribute('aria-valuenow', String(percent));
+  refs['page-progress-value'].textContent = `${percent}%`;
 }
 
 function toast(message) {

@@ -82,7 +82,21 @@ main { padding: 1.25rem 1.5rem 2rem; }
 .feature-controls { display: flex; align-items: flex-end; flex-wrap: wrap; gap: .55rem; border: 1px solid #d9e6ee; border-radius: 7px; padding: .6rem; background: #f2f7fa; }
 .feature-controls label { display: flex; flex-direction: column; gap: .25rem; color: var(--muted); font-size: .75rem; font-weight: 700; }
 .feature-controls .select-input, .feature-controls .text-input { min-height: 36px; min-width: 110px; }
-.forecast-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: .75rem; margin-bottom: .8rem; }
+.forecast-summary { display: block; margin-bottom: .8rem; }
+.forecast-table-caption { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: .45rem; margin-bottom: .65rem; border: 1px solid #d4e3ec; border-radius: 7px; padding: .65rem .75rem; background: #eef6fb; }
+.forecast-table-caption span { color: var(--muted); font-size: .78rem; }
+.forecast-table-wrap { overflow: auto; overscroll-behavior: contain; border: 1px solid #d6e1e7; border-radius: 7px; background: #fff; }
+.forecast-table { width: 100%; min-width: 1060px; table-layout: auto; border-collapse: separate; border-spacing: 0; }
+.forecast-table th, .forecast-table td { min-width: 85px; max-width: none; padding: .68rem .6rem; border-right: 1px solid #e1e7ea; border-bottom: 1px solid #e1e7ea; text-align: center; vertical-align: middle; }
+.forecast-table thead th { position: sticky; top: 0; z-index: 3; color: #fff; white-space: normal; background: #526f81; }
+.forecast-table tbody th { position: sticky; left: 0; z-index: 2; min-width: 125px; color: var(--ink); text-align: left; background: #f0f6f9; }
+.forecast-table thead th:first-child { left: 0; z-index: 4; min-width: 125px; text-align: left; }
+.forecast-table tbody tr:nth-child(even) td { background: #f9fbfc; }
+.forecast-table tbody tr:hover td, .forecast-table tbody tr:hover th { background: #edf6f9; }
+.forecast-past-due { color: #a9434c; font-weight: 800; background: #fff1f2 !important; }
+.forecast-detail-cell { min-width: 150px !important; }
+.forecast-detail-cell small { display: block; margin-top: .28rem; color: var(--muted); white-space: nowrap; }
+.forecast-detail-button { min-height: 32px; padding: .38rem .55rem; }
 .forecast-overview { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(190px, 1.5fr) repeat(6, minmax(82px, 1fr)); gap: .5rem; align-items: center; border: 1px solid #d4e3ec; border-radius: 7px; padding: .7rem; background: #eef6fb; }
 .forecast-overview > div { border-left: 1px solid var(--line); padding-left: .5rem; }
 .forecast-card { border: 1px solid #dce7ed; border-top: 4px solid var(--blue); border-radius: 7px; padding: .8rem; background: #fbfdff; box-shadow: 0 4px 12px rgba(70,107,132,.06); }

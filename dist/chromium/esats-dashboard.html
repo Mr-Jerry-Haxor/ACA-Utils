@@ -28,8 +28,14 @@
     <main>
       <section class="config-summary" aria-labelledby="config-title">
         <div class="section-heading">
-          <div><p class="eyebrow">Global configuration</p><h2 id="config-title">Supported MO configuration</h2></div>
-          <span id="config-count" class="count-badge"></span>
+          <div><p class="eyebrow">ESATS configuration</p><h2 id="config-title">ESATS supported MO configuration</h2></div>
+          <div class="config-actions">
+            <span id="config-count" class="count-badge"></span>
+            <input id="config-import-input" type="file" accept="application/json,.json" hidden>
+            <button id="config-import-button" class="button button-secondary" type="button">Import JSON</button>
+            <button id="config-export-button" class="button button-secondary" type="button">Export JSON</button>
+            <button id="config-copy-button" class="button button-quiet" type="button">Copy Compliance Configuration</button>
+          </div>
         </div>
         <div id="mvo-list" class="configuration-groups"></div>
       </section>
@@ -55,6 +61,11 @@
       </section>
     </main>
   </div>
+  <nav class="page-jump" aria-label="Page navigation">
+    <button id="page-top" type="button" aria-label="Go to top" title="Go to top">↑</button>
+    <div id="page-progress-ring" class="page-progress-ring" role="progressbar" aria-label="Page scroll progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span id="page-progress-value">0%</span></div>
+    <button id="page-bottom" type="button" aria-label="Go to bottom" title="Go to bottom">↓</button>
+  </nav>
   <div id="toast" class="toast" hidden role="status"></div>
   <script type="module" src="js/esats-ui.js"></script>
 </body>

@@ -2,6 +2,7 @@ import { cloneDefaultConfig } from './default-config.js';
 import { CONFIG_STORE as STORE, openDatabase } from './db-schema.js';
 
 const ACTIVE_KEY = 'active-supported-rules';
+const ESATS_KEY = 'esats-supported-rules';
 
 async function transact(mode, operation) {
   const db = await openDatabase();
@@ -31,6 +32,20 @@ export async function saveConfig(input) {
   const value = validateConfig(input);
   value.updatedAt = new Date().toISOString();
   await transact('readwrite', (store) => store.put({ id: ACTIVE_KEY, value }));
+  return value;
+}
+
+export async function loadEsatsConfig() {
+  const existing = await transact('readonly', (store) => store.get(ESATS_KEY));
+  if (existing?.value) return validateConfig(existing.value);
+  const complianceConfig = await loadConfig();
+  return saveEsatsConfig(complianceConfig);
+}
+
+export async function saveEsatsConfig(input) {
+  const value = validateConfig(input);
+  value.updatedAt = new Date().toISOString();
+  await transact('readwrite', (store) => store.put({ id: ESATS_KEY, value }));
   return value;
 }
 
