@@ -93,6 +93,8 @@ main { padding: 1.25rem 1.5rem 2rem; }
 .forecast-table thead th:first-child { left: 0; z-index: 4; min-width: 125px; text-align: left; }
 .forecast-table tbody tr:nth-child(even) td { background: #f9fbfc; }
 .forecast-table tbody tr:hover td, .forecast-table tbody tr:hover th { background: #edf6f9; }
+.forecast-table tfoot th, .forecast-table tfoot td { border-top: 2px solid #8ea9b8; color: #203846; font-weight: 900; background: #dfeef4; }
+.forecast-table tfoot th { position: sticky; left: 0; z-index: 2; text-align: left; }
 .forecast-past-due { color: #a9434c; font-weight: 800; background: #fff1f2 !important; }
 .forecast-detail-cell { min-width: 150px !important; }
 .forecast-detail-cell small { display: block; margin-top: .28rem; color: var(--muted); white-space: nowrap; }

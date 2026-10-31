@@ -1,6 +1,7 @@
 import { loadConfig, loadEsatsConfig, saveEsatsConfig } from './config-store.js';
+import { fetchApplicationsForOrganization, fetchMaintainingOrganizations } from './esats-api.js';
 import { displayValue, exportExcel, exportJson } from './export.js';
-import { filterConfiguredEsatsApplications, retirementRowsForInterval, rowsForInterval, summarizeEsatsApplications } from './esats-logic.js';
+import { filterConfiguredEsatsApplications, personIdentity, retirementRowsForInterval, rowsForInterval, summarizeEsatsApplications } from './esats-logic.js';
 import { shouldRefreshEsats, synchronizeEsats } from './esats-sync.js';
 import { loadEsatsSnapshot } from './esats-store.js';
 import { applyTableState, nextSort, uniqueColumnValues } from './table-state.js';
@@ -17,13 +18,16 @@ const state = {
 };
 let activeColumnFilterPanel = null;
 let activeColumnFilterOutsideHandler = null;
+let configPickerSequence = 0;
 
 const refs = Object.fromEntries([
   'sync-status','refresh-data','close-dashboard','sync-progress','progress-fill','progress-percent',
-  'config-count','mvo-list','summary-cards','supported-table','retired-table','lifecycle-table',
+  'summary-cards','supported-table','retired-table','lifecycle-table',
   'supported-table-section','retired-table-section','lifecycle-table-section','supported-filter-label','retired-filter-label',
+  'supported-section-count','retired-section-count','lifecycle-section-count',
   'lifecycle-filter-label','clear-supported-filter','clear-retired-filter','clear-lifecycle-filter',
-  'config-import-input','config-import-button','config-export-button','config-copy-button',
+  'esats-config-button','config-modal-backdrop','config-modal','config-modal-close','config-modal-subtitle',
+  'config-modal-toolbar','config-modal-content','config-modal-footer',
   'page-top','page-bottom','page-progress-ring','page-progress-value','toast',
 ].map((id) => [id, document.getElementById(id)]));
 
@@ -74,10 +78,9 @@ refs['refresh-data'].addEventListener('click', async () => {
   if (!confirm('ESATS data is refreshed automatically once per day. Do you want to start another full refresh now?')) return;
   await refreshEsatsData();
 });
-refs['config-import-button'].addEventListener('click', () => refs['config-import-input'].click());
-refs['config-import-input'].addEventListener('change', importEsatsConfiguration);
-refs['config-export-button'].addEventListener('click', () => exportJson(state.config, 'esats-supported-mo-configuration'));
-refs['config-copy-button'].addEventListener('click', copyComplianceConfiguration);
+refs['esats-config-button'].addEventListener('click', openEsatsConfiguration);
+refs['config-modal-close'].addEventListener('click', closeEsatsConfiguration);
+refs['config-modal-backdrop'].addEventListener('click', (event) => { if (event.target === refs['config-modal-backdrop']) closeEsatsConfiguration(); });
 refs['page-top'].addEventListener('click', () => scrollPageTo(0));
 refs['page-bottom'].addEventListener('click', () => scrollPageTo(document.documentElement.scrollHeight));
 addEventListener('scroll', updatePageProgress, { passive: true });
@@ -85,7 +88,11 @@ addEventListener('resize', updatePageProgress, { passive: true });
 refs['clear-supported-filter'].addEventListener('click', () => { state.supportedFilter = null; renderTables(); });
 refs['clear-retired-filter'].addEventListener('click', () => { state.retiredFilter = null; renderTables(); });
 refs['clear-lifecycle-filter'].addEventListener('click', () => { state.lifecycleDays = null; renderTables(); });
-addEventListener('keydown', (event) => { if (event.key === 'Escape') closeColumnValueFilter(); });
+addEventListener('keydown', (event) => {
+  if (event.key !== 'Escape') return;
+  if (activeColumnFilterPanel) closeColumnValueFilter();
+  else if (!refs['config-modal-backdrop'].hidden) closeEsatsConfiguration();
+});
 addEventListener('resize', closeColumnValueFilter, { passive: true });
 
 initialize().catch(showFatal);
@@ -130,33 +137,168 @@ async function refreshEsatsData() {
   }
 }
 
-async function importEsatsConfiguration() {
-  const file = refs['config-import-input'].files?.[0];
-  if (!file) return;
+async function openEsatsConfiguration() {
+  refs['config-modal-backdrop'].hidden = false;
+  document.body.classList.add('modal-open');
+  refs['config-modal-subtitle'].textContent = 'Loading ESATS maintaining organizations and the current daily application inventory…';
+  refs['config-modal-toolbar'].replaceChildren();
+  refs['config-modal-content'].replaceChildren(el('div', { class: 'config-loading' }, 'Loading configuration inventory…'));
+  refs['config-modal-footer'].replaceChildren();
+  let organizations = state.snapshot.mvos ?? [];
+  let directApplications = [];
+  let inventoryStatus = 'Using the stored daily ESATS inventory.';
   try {
-    state.config = await saveEsatsConfig(JSON.parse(await file.text()));
-    applySnapshot();
-    renderAll();
-    setSyncStatus();
-    toast('ESATS supported MO configuration imported. Use Refresh Data to fetch newly included MOs.');
+    const token = await requestEsatsToken();
+    const liveOrganizations = await fetchMaintainingOrganizations({ token });
+    if (Array.isArray(liveOrganizations)) {
+      organizations = liveOrganizations;
+      const included = new Set(state.config.includedOrganizations.map(normalize));
+      const selectedOrganizations = liveOrganizations.filter((item) => included.has(normalize(item.name)));
+      const applicationGroups = await mapWithLimit(selectedOrganizations, 5, async (organization) => {
+        try {
+          const applications = await fetchApplicationsForOrganization(organization.id, { token });
+          return (Array.isArray(applications) ? applications : []).map((application) => ({
+            applicationName: String(application.name ?? '').trim(),
+            mvoName: String(application.maintainingOrganization?.name ?? organization.name ?? '').trim(),
+          }));
+        } catch { return []; }
+      });
+      directApplications = applicationGroups.flat();
+      inventoryStatus = 'MOs and application names loaded directly from ESATS; manager and ASA suggestions use the current daily detail inventory.';
+    }
   } catch (error) {
-    toast(`ESATS configuration import failed: ${error.message}`);
-  } finally {
-    refs['config-import-input'].value = '';
+    inventoryStatus = `Live MO lookup unavailable (${error.message}); using stored data and retaining unmatched rules.`;
   }
+  renderEsatsConfigurationForm(organizations, inventoryStatus, directApplications);
 }
 
-async function copyComplianceConfiguration() {
-  if (!confirm('Replace the separate ESATS supported MO configuration with the current Compliance configuration?')) return;
-  try {
-    state.config = await saveEsatsConfig(await loadConfig());
-    applySnapshot();
-    renderAll();
-    setSyncStatus();
-    toast('Compliance configuration copied to the separate ESATS configuration. Use Refresh Data to fetch additions.');
-  } catch (error) {
-    toast(`Configuration copy failed: ${error.message}`);
+function closeEsatsConfiguration() {
+  refs['config-modal-backdrop'].hidden = true;
+  document.body.classList.remove('modal-open');
+}
+
+function renderEsatsConfigurationForm(organizations, inventoryStatus, directApplications = []) {
+  const inventory = state.snapshot.applications ?? [];
+  const organizationNames = [...new Set([
+    ...organizations.map((item) => String(item.name ?? '').trim()),
+    ...state.config.includedOrganizations,
+    ...Object.keys(state.config.restrictedOrganizations ?? {}),
+  ].filter(Boolean))].sort(localeSort);
+  const applicationNames = [...new Set([...inventory, ...directApplications].map((item) => item.applicationName).filter(Boolean))].sort(localeSort);
+  const managers = uniquePeopleOptions(inventory, 'applicationManagers', 'applicationManagerBemsIds');
+  const asas = uniquePeopleOptions(inventory, 'securityAdministrators', 'securityAdministratorBemsIds');
+  const applicationsByOrganization = new Map();
+  for (const application of [...inventory, ...directApplications]) {
+    const key = normalize(application.mvoName);
+    if (!applicationsByOrganization.has(key)) applicationsByOrganization.set(key, new Set());
+    applicationsByOrganization.get(key).add(application.applicationName);
   }
+
+  refs['config-modal-subtitle'].textContent = 'Configure ESATS independently. Values missing from the current inventory are retained and ignored until they match.';
+  refs['config-modal-toolbar'].replaceChildren(
+    el('span', { class: 'config-inventory-status' }, inventoryStatus),
+    el('span', { class: 'config-update-status' }, `Last updated: ${formatDateTime(state.config.updatedAt)}`),
+  );
+
+  const selectedOrganizations = new Set(state.config.includedOrganizations.map(normalize));
+  const organizationList = el('div', { class: 'config-check-list' });
+  for (const name of organizationNames) {
+    const found = organizations.some((item) => normalize(item.name) === normalize(name));
+    organizationList.append(configCheckRow(name, selectedOrganizations.has(normalize(name)), found));
+  }
+  const organizationSearch = el('input', { class: 'config-search-input', type: 'search', placeholder: 'Search maintaining organizations…', 'aria-label': 'Search maintaining organizations' });
+  organizationSearch.addEventListener('input', () => {
+    const term = normalize(organizationSearch.value);
+    for (const row of organizationList.children) row.hidden = Boolean(term && !normalize(row.dataset.label).includes(term));
+  });
+
+  const scopedList = el('div', { class: 'config-rule-list' });
+  for (const [organization, applications] of Object.entries(state.config.restrictedOrganizations ?? {})) {
+    for (const application of applications) scopedList.append(scopedApplicationRuleRow(organization, application, organizationNames, applicationsByOrganization));
+  }
+  const managerList = el('div', { class: 'config-rule-list' });
+  for (const value of state.config.managerExceptions ?? []) managerList.append(configValueRuleRow(value, managers, 'manager', 'Type to search application managers'));
+  const asaList = el('div', { class: 'config-rule-list' });
+  for (const value of state.config.asaExceptions ?? []) asaList.append(configValueRuleRow(value, asas, 'person', 'Type to search ASAs'));
+  const applicationList = el('div', { class: 'config-rule-list' });
+  for (const value of state.config.applicationExceptions ?? []) applicationList.append(configValueRuleRow(value, applicationNames, 'application', 'Type to search applications'));
+
+  const addScoped = el('button', { class: 'button button-secondary', type: 'button' }, 'Add scoped application');
+  addScoped.addEventListener('click', () => scopedList.append(scopedApplicationRuleRow('', '', organizationNames, applicationsByOrganization)));
+  const addManager = el('button', { class: 'button button-secondary', type: 'button' }, 'Add manager exception');
+  addManager.addEventListener('click', () => managerList.append(configValueRuleRow('', managers, 'manager', 'Type to search application managers')));
+  const addAsa = el('button', { class: 'button button-secondary', type: 'button' }, 'Add ASA exception');
+  addAsa.addEventListener('click', () => asaList.append(configValueRuleRow('', asas, 'person', 'Type to search ASAs')));
+  const addApplication = el('button', { class: 'button button-secondary', type: 'button' }, 'Add application exception');
+  addApplication.addEventListener('click', () => applicationList.append(configValueRuleRow('', applicationNames, 'application', 'Type to search applications')));
+
+  refs['config-modal-content'].replaceChildren(el('div', { class: 'esats-config-layout' },
+    el('div', {},
+      configFormSection('Included maintaining organizations', 'Applications are included when their normalized maintaining organization is selected.', organizationSearch, organizationList),
+      configFormSection('Scoped MO application rules', 'When an MO has scoped rules, only the listed applications are included for that MO.', scopedList, addScoped),
+    ),
+    el('div', {},
+      configFormSection('Application manager exceptions', 'Exclude all applications managed by these people, regardless of MO.', managerList, addManager),
+      configFormSection('ASA exceptions', 'Exclude all applications assigned to these ASAs, regardless of MO.', asaList, addAsa),
+      configFormSection('Application exceptions', 'Exclude these application names regardless of MO.', applicationList, addApplication),
+    ),
+  ));
+
+  const importInput = el('input', { type: 'file', accept: 'application/json,.json', hidden: true });
+  const importButton = el('button', { class: 'button button-secondary', type: 'button' }, 'Import JSON');
+  const exportButton = el('button', { class: 'button button-secondary', type: 'button' }, 'Export JSON');
+  const copyButton = el('button', { class: 'button button-quiet', type: 'button' }, 'Copy Compliance Configuration');
+  const saveButton = el('button', { class: 'button button-primary', type: 'button' }, 'Save ESATS configuration');
+  importButton.addEventListener('click', () => importInput.click());
+  exportButton.addEventListener('click', () => exportJson(state.config, 'esats-supported-mo-configuration'));
+  copyButton.addEventListener('click', async () => {
+    if (!confirm('Replace the separate ESATS configuration with the current Compliance configuration?')) return;
+    try {
+      state.config = await saveEsatsConfig(await loadConfig());
+      renderEsatsConfigurationForm(organizations, inventoryStatus, directApplications);
+      toast('Compliance configuration copied into the ESATS configuration.');
+    } catch (error) { toast(`Configuration copy failed: ${error.message}`); }
+  });
+  importInput.addEventListener('change', async () => {
+    const file = importInput.files?.[0];
+    if (!file) return;
+    try {
+      state.config = await saveEsatsConfig(JSON.parse(await file.text()));
+      renderEsatsConfigurationForm(organizations, inventoryStatus, directApplications);
+      toast('ESATS configuration imported.');
+    } catch (error) { toast(`Import failed: ${error.message}`); }
+  });
+  saveButton.addEventListener('click', async () => {
+    try {
+      const includedOrganizations = [...organizationList.querySelectorAll('input:checked')].map((input) => input.value);
+      const restrictedOrganizations = {};
+      for (const row of scopedList.querySelectorAll('.config-rule-row')) {
+        const organization = row.querySelector('[data-config-field="organization"]').value.trim();
+        const application = row.querySelector('[data-config-field="application"]').value.trim();
+        if (!organization || !application) continue;
+        (restrictedOrganizations[organization] ??= []).push(application);
+      }
+      const managerExceptions = configRuleValues(managerList);
+      const asaExceptions = configRuleValues(asaList);
+      const applicationExceptions = configRuleValues(applicationList);
+      state.config = await saveEsatsConfig({
+        schemaVersion: 1,
+        bemsId: state.config.bemsId,
+        includedOrganizations,
+        restrictedOrganizations,
+        managerExceptions,
+        asaExceptions,
+        excludeBlankAsaFromScmp: state.config.excludeBlankAsaFromScmp,
+        applicationExceptions,
+      });
+      applySnapshot();
+      renderAll();
+      setSyncStatus();
+      closeEsatsConfiguration();
+      toast('ESATS supported MO configuration saved. Use Refresh Data to fetch newly included MOs.');
+    } catch (error) { toast(`Configuration was not saved: ${error.message}`); }
+  });
+  refs['config-modal-footer'].replaceChildren(el('div', { class: 'toolbar-group' }, importInput, importButton, exportButton, copyButton), saveButton);
 }
 
 function requestEsatsToken() {
@@ -187,48 +329,15 @@ function applySnapshot() {
 }
 
 function renderAll() {
-  renderConfiguration();
   renderSummary();
   renderTables();
   updatePageProgress();
 }
 
-function renderConfiguration() {
-  if (!state.config) {
-    refs['config-count'].textContent = 'Unavailable';
-    refs['mvo-list'].replaceChildren(el('span', { class: 'mvo-chip is-missing' }, 'Supported MO configuration could not be loaded.'));
-    return;
-  }
-  const matched = new Set((state.snapshot.mvos ?? []).map((mvo) => normalize(mvo.name)));
-  refs['config-count'].textContent = `${state.config.includedOrganizations.length} configured`;
-  const supportedOrganizations = state.config.includedOrganizations.map((name) => el('span', {
-    class: `mvo-chip${matched.has(normalize(name)) ? '' : ' is-missing'}`,
-    title: matched.has(normalize(name)) ? 'Matched in the latest ESATS synchronization' : 'Not matched in the latest ESATS synchronization',
-  }, name));
-  const restrictedRules = Object.entries(state.config.restrictedOrganizations ?? {}).map(([organization, applications]) =>
-    el('article', { class: 'config-rule' }, el('h4', {}, organization), el('div', { class: 'config-value-list' }, ...applications.map(configChip))),
-  );
-  const managerExceptions = (state.config.managerExceptions ?? []).map((rule) => configChip(typeof rule === 'string' ? rule : rule?.manager));
-  const asaExceptions = (state.config.asaExceptions ?? []).map((rule) => configChip(typeof rule === 'string' ? rule : rule?.asa));
-  const applicationExceptions = (state.config.applicationExceptions ?? []).map(configChip);
-  refs['mvo-list'].replaceChildren(
-    configurationGroup('Supported MOs', supportedOrganizations, state.config.includedOrganizations.length),
-    configurationGroup('Restricted MO application rules', restrictedRules, restrictedRules.length),
-    configurationGroup('Application manager exceptions', managerExceptions, managerExceptions.length),
-    configurationGroup('ASA exceptions', asaExceptions, asaExceptions.length),
-    configurationGroup('Application exceptions', applicationExceptions, applicationExceptions.length),
-    configurationGroup('Configuration metadata', [
-      configMetadata('BEMS ID', state.config.bemsId),
-      configMetadata('Exclude blank ASA from SCMP percentage', state.config.excludeBlankAsaFromScmp ? 'Enabled' : 'Disabled'),
-      configMetadata('Last updated', formatDateTime(state.config.updatedAt)),
-    ], 3),
-  );
-}
-
 function renderSummary() {
   const summary = state.summary;
   const allSupported = el('button', { class: 'supported-count-button', type: 'button' },
-    el('small', {}, 'Supported applications'), el('strong', {}, formatNumber(summary.supported)), el('span', {}, 'Show all supported MO applications'),
+    el('small', {}, 'Active supported applications'), el('strong', {}, formatNumber(summary.supported)), el('span', {}, 'Retired and marked records excluded'),
   );
   const newApplications = el('button', { class: 'supported-count-button is-new', type: 'button' },
     el('small', {}, 'New applications'), el('strong', {}, formatNumber(summary.newApplications)), el('span', {}, 'Supported applications without an ASA'),
@@ -237,7 +346,7 @@ function renderSummary() {
   newApplications.addEventListener('click', () => applySupportedCardFilter('new'));
   const supported = el('article', { class: 'summary-card' },
     el('h3', {}, 'Supported Applications Count'),
-    el('p', { class: 'card-note' }, 'Click a count to filter the supported MO table.'),
+    el('p', { class: 'card-note' }, `${formatNumber(summary.excludedFromSupported)} retired or marked-for-deletion record${summary.excludedFromSupported === 1 ? '' : 's'} moved to the dedicated table.`),
     el('div', { class: 'supported-count-grid' }, allSupported, newApplications),
   );
 
@@ -299,7 +408,7 @@ function applyRetiredCardFilter(days, eventType, olderThan = false) {
 }
 
 function renderTables() {
-  const supportedRows = state.supportedFilter === 'new' ? state.summary.newRows : state.applications;
+  const supportedRows = state.supportedFilter === 'new' ? state.summary.newRows : state.summary.supportedRows;
   tables.supported.setRows(supportedRows);
   const retiredRows = state.retiredFilter
     ? retirementRowsForInterval(state.summary.retiredRows, state.retiredFilter.days, state.retiredFilter.eventType, new Date(), state.retiredFilter.olderThan)
@@ -309,12 +418,15 @@ function renderTables() {
     ? rowsForInterval(state.summary.lifecycleRows, 'lifecycleChangeTimestamp', state.lifecycleDays)
     : state.summary.lifecycleRows;
   tables.lifecycle.setRows(lifecycleRows);
+  refs['supported-section-count'].textContent = `${formatNumber(supportedRows.length)} records`;
+  refs['retired-section-count'].textContent = `${formatNumber(retiredRows.length)} records`;
+  refs['lifecycle-section-count'].textContent = `${formatNumber(lifecycleRows.length)} records`;
   refs['clear-supported-filter'].hidden = !state.supportedFilter;
   refs['supported-filter-label'].textContent = state.supportedFilter === 'new'
     ? 'Card filter: New applications — supported MO applications without an Application Security Administrator (ASA).'
     : state.supportedFilter === 'all'
-      ? 'Card selection: All supported MO applications.'
-      : 'Card filter: None — showing all supported MO applications.';
+      ? 'Card selection: All active supported MO applications; retired and marked-for-deletion records remain excluded.'
+      : 'Card filter: None — showing active supported MO applications. Retired and marked-for-deletion records are shown in the dedicated table below.';
   refs['clear-retired-filter'].hidden = !state.retiredFilter;
   refs['retired-filter-label'].textContent = state.retiredFilter
     ? `Card filter: ${state.retiredFilter.eventType === 'retired' ? 'Retired applications' : 'Applications marked for deletion'} ${state.retiredFilter.olderThan ? 'older than' : 'in the last'} ${state.retiredFilter.days} days.`
@@ -579,15 +691,106 @@ function toast(message) {
   toast.timer = setTimeout(() => { refs.toast.hidden = true; }, 5000);
 }
 
-function configurationGroup(label, content, count) {
-  const body = content.length ? content : [el('p', { class: 'config-empty' }, 'None configured.')];
-  return el('details', { class: 'config-group' },
-    el('summary', {}, el('span', {}, label), el('strong', {}, formatNumber(count))),
-    el('div', { class: 'config-group-content' }, ...body),
-  );
+function configFormSection(title, note, ...content) {
+  return el('section', { class: 'config-form-section' }, el('h3', {}, title), el('p', { class: 'config-form-note' }, note), ...content);
 }
-function configChip(value) { return el('span', { class: 'config-chip' }, String(value ?? '').trim()); }
-function configMetadata(label, value) { return el('div', { class: 'config-metadata-row' }, el('span', {}, label), el('strong', {}, value || 'Not available')); }
+
+function configCheckRow(name, checked, found) {
+  const input = el('input', { type: 'checkbox', value: name, checked });
+  const row = el('label', { class: `config-check-row${found ? '' : ' is-warning'}`, 'data-label': name }, input, el('span', {}, name));
+  if (!found) row.append(el('small', {}, 'Not found in current ESATS MO data; retained and ignored until available.'));
+  return row;
+}
+
+function scopedApplicationRuleRow(organization, application, organizationNames, applicationsByOrganization) {
+  const select = el('select', { class: 'config-select-input', 'data-config-field': 'organization', 'aria-label': 'Scoped maintaining organization' },
+    el('option', { value: '' }, 'Select MO'),
+    ...organizationNames.map((name) => el('option', { value: name, selected: normalize(name) === normalize(organization) }, name)),
+  );
+  const allApplications = [...new Set([...applicationsByOrganization.values()].flatMap((values) => [...values]))].sort(localeSort);
+  const pickerId = `esats-config-app-${++configPickerSequence}`;
+  const input = el('input', { class: 'config-text-input', type: 'text', value: application, list: pickerId, placeholder: 'Application name', 'data-config-field': 'application', 'aria-label': 'Scoped application' });
+  const datalist = el('datalist', { id: pickerId }, ...allApplications.map((name) => el('option', { value: name })));
+  const status = el('small', { class: 'config-match-status' });
+  const update = () => {
+    const available = applicationsByOrganization.get(normalize(select.value)) ?? new Set();
+    const found = [...available].some((name) => normalize(name) === normalize(input.value));
+    status.textContent = !input.value.trim() || found ? '' : 'Not found in the current ESATS inventory; this rule will be retained and ignored until it matches.';
+    status.classList.toggle('is-warning', Boolean(status.textContent));
+  };
+  select.addEventListener('change', update);
+  input.addEventListener('input', update);
+  const row = el('div', { class: 'config-rule-row' }, select, el('div', { class: 'config-input-stack' }, input, datalist, status), configRemoveButton());
+  update();
+  return row;
+}
+
+function configValueRuleRow(value, options, matchType, placeholder) {
+  const text = String(value ?? '').trim();
+  const pickerId = `esats-config-value-${++configPickerSequence}`;
+  const input = el('input', { class: 'config-text-input', type: 'text', value: text, list: pickerId, placeholder, 'data-config-value': 'true', 'aria-label': placeholder });
+  const datalist = el('datalist', { id: pickerId }, ...options.map((name) => el('option', { value: name })));
+  const status = el('small', { class: 'config-match-status' });
+  const update = () => {
+    const found = options.some((option) => configValuesMatch(input.value, option, matchType));
+    status.textContent = !input.value.trim() || found ? '' : 'Not found in the current ESATS inventory; this exception will be retained and ignored until it matches.';
+    status.classList.toggle('is-warning', Boolean(status.textContent));
+  };
+  input.addEventListener('input', update);
+  const row = el('div', { class: 'config-rule-row app-only' }, el('div', { class: 'config-input-stack' }, input, datalist, status), configRemoveButton());
+  update();
+  return row;
+}
+
+function configRemoveButton() {
+  const button = el('button', { class: 'config-remove-button', type: 'button', 'aria-label': 'Remove rule', title: 'Remove rule' }, '×');
+  button.addEventListener('click', () => button.closest('.config-rule-row')?.remove());
+  return button;
+}
+
+function configRuleValues(container) {
+  return [...container.querySelectorAll('[data-config-value]')].map((input) => input.value.trim()).filter(Boolean);
+}
+
+function configValuesMatch(left, right, type) {
+  if (type === 'manager' || type === 'person') {
+    const a = personIdentity(left);
+    const b = personIdentity(right);
+    return Boolean((a.bemsId && b.bemsId && a.bemsId === b.bemsId) || (a.nameKey && a.nameKey === b.nameKey));
+  }
+  return normalize(left) === normalize(right);
+}
+
+function uniquePeopleOptions(applications, namesKey, idsKey) {
+  const values = new Map();
+  for (const application of applications) {
+    const names = application[namesKey] ?? [];
+    const ids = application[idsKey] ?? [];
+    names.forEach((name, index) => {
+      const value = `${name}${ids[index] ? ` (${ids[index]})` : ''}`.trim();
+      const key = personIdentity(value);
+      const identity = key.bemsId || key.nameKey;
+      if (identity && !values.has(identity)) values.set(identity, value);
+    });
+  }
+  return [...values.values()].sort(localeSort);
+}
+
+async function mapWithLimit(items, limit, worker) {
+  const results = new Array(items.length);
+  let nextIndex = 0;
+  async function run() {
+    while (nextIndex < items.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      results[index] = await worker(items[index], index);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, run));
+  return results;
+}
+
+function localeSort(left, right) { return String(left).localeCompare(String(right), 'en', { sensitivity: 'base', numeric: true }); }
 function column(key, label, value = null, options = {}) { return { key, label, ...options, ...(value ? { value: (row) => value(row[key], row) } : {}) }; }
 function dateColumn(key, label) { return column(key, label, formatDate); }
 function yesNo(value) { return value ? 'Yes' : 'No'; }

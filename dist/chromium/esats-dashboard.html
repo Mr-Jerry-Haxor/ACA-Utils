@@ -15,6 +15,7 @@
         <p id="sync-status" class="sync-status" aria-live="polite">Loading stored ESATS data…</p>
       </div>
       <div class="header-actions">
+        <button id="esats-config-button" class="button button-secondary" type="button">ESATS supported MO configuration</button>
         <button id="refresh-data" class="button button-primary" type="button">Refresh Data</button>
         <button id="close-dashboard" class="button button-secondary" type="button">Close</button>
       </div>
@@ -26,40 +27,37 @@
     </div>
 
     <main>
-      <section class="config-summary" aria-labelledby="config-title">
-        <div class="section-heading">
-          <div><p class="eyebrow">ESATS configuration</p><h2 id="config-title">ESATS supported MO configuration</h2></div>
-          <div class="config-actions">
-            <span id="config-count" class="count-badge"></span>
-            <input id="config-import-input" type="file" accept="application/json,.json" hidden>
-            <button id="config-import-button" class="button button-secondary" type="button">Import JSON</button>
-            <button id="config-export-button" class="button button-secondary" type="button">Export JSON</button>
-            <button id="config-copy-button" class="button button-quiet" type="button">Copy Compliance Configuration</button>
-          </div>
-        </div>
-        <div id="mvo-list" class="configuration-groups"></div>
-      </section>
-
       <section id="summary-cards" class="summary-cards" aria-label="ESATS summary metrics"></section>
 
       <section id="supported-table-section" class="data-section" aria-labelledby="supported-table-title">
-        <div class="section-heading"><div><p class="eyebrow">Applications</p><h2 id="supported-table-title">Supported MO applications</h2></div><button id="clear-supported-filter" class="button button-quiet" type="button" hidden>Clear card filter</button></div>
+        <div class="section-heading"><div><p class="eyebrow">Applications</p><h2 id="supported-table-title">Supported MO applications</h2></div><div class="section-actions"><span id="supported-section-count" class="section-count-badge"></span><button id="clear-supported-filter" class="button button-quiet" type="button" hidden>Clear card filter</button></div></div>
         <p id="supported-filter-label" class="active-filter"></p>
         <div id="supported-table"></div>
       </section>
 
       <section id="retired-table-section" class="data-section" aria-labelledby="retired-table-title">
-        <div class="section-heading"><div><p class="eyebrow">Retirement and deletion</p><h2 id="retired-table-title">Retired and marked-for-deletion applications</h2></div><button id="clear-retired-filter" class="button button-quiet" type="button" hidden>Clear card filter</button></div>
+        <div class="section-heading"><div><p class="eyebrow">Retirement and deletion</p><h2 id="retired-table-title">Retired and marked-for-deletion applications</h2></div><div class="section-actions"><span id="retired-section-count" class="section-count-badge"></span><button id="clear-retired-filter" class="button button-quiet" type="button" hidden>Clear card filter</button></div></div>
         <p id="retired-filter-label" class="active-filter"></p>
         <div id="retired-table"></div>
       </section>
 
       <section id="lifecycle-table-section" class="data-section" aria-labelledby="lifecycle-table-title">
-        <div class="section-heading"><div><p class="eyebrow">Lifecycle</p><h2 id="lifecycle-table-title">Lifecycle changes</h2></div><button id="clear-lifecycle-filter" class="button button-quiet" type="button" hidden>Clear card filter</button></div>
+        <div class="section-heading"><div><p class="eyebrow">Lifecycle</p><h2 id="lifecycle-table-title">Lifecycle changes</h2></div><div class="section-actions"><span id="lifecycle-section-count" class="section-count-badge"></span><button id="clear-lifecycle-filter" class="button button-quiet" type="button" hidden>Clear card filter</button></div></div>
         <p id="lifecycle-filter-label" class="active-filter"></p>
         <div id="lifecycle-table"></div>
       </section>
     </main>
+  </div>
+  <div id="config-modal-backdrop" class="config-modal-backdrop" hidden>
+    <section id="config-modal" class="config-modal" role="dialog" aria-modal="true" aria-labelledby="config-modal-title">
+      <header class="config-modal-header">
+        <div><p class="eyebrow">ESATS configuration</p><h2 id="config-modal-title">ESATS supported MO configuration</h2><p id="config-modal-subtitle" class="sync-status"></p></div>
+        <button id="config-modal-close" class="modal-close-button" type="button" aria-label="Close configuration">×</button>
+      </header>
+      <div id="config-modal-toolbar" class="config-modal-toolbar"></div>
+      <div id="config-modal-content" class="config-modal-content"></div>
+      <footer id="config-modal-footer" class="config-modal-footer"></footer>
+    </section>
   </div>
   <nav class="page-jump" aria-label="Page navigation">
     <button id="page-top" type="button" aria-label="Go to top" title="Go to top">↑</button>

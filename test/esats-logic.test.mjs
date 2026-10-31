@@ -102,3 +102,18 @@ test('new ESATS applications are supported applications without an ASA', () => {
   assert.equal(summary.newApplications, 2);
   assert.deepEqual(summary.newRows.map((row) => row.applicationName), ['New App', 'Blank ASA App']);
 });
+
+test('supported ESATS population excludes retired and marked-for-deletion applications', () => {
+  const rows = [
+    { applicationName: 'Active', isRetired: false, isMarkedForDeletion: false, securityAdministrators: ['ASA'] },
+    { applicationName: 'Retired', isRetired: true, isMarkedForDeletion: false, securityAdministrators: [] },
+    { applicationName: 'Marked', isRetired: false, isMarkedForDeletion: true, securityAdministrators: [] },
+    { applicationName: 'Both', isRetired: true, isMarkedForDeletion: true, securityAdministrators: [] },
+  ];
+  const summary = summarizeEsatsApplications(rows);
+  assert.equal(summary.supported, 1);
+  assert.equal(summary.excludedFromSupported, 3);
+  assert.deepEqual(summary.supportedRows.map((row) => row.applicationName), ['Active']);
+  assert.equal(summary.retiredRows.length, 3);
+  assert.equal(summary.newApplications, 0);
+});

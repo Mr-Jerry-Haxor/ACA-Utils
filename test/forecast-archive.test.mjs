@@ -74,6 +74,8 @@ test('next forecast does not include overdue backlog', () => {
   }, 95.1);
   assert.deepEqual(result.dueRows.map(({ row }) => row.id), ['next']);
   assert.equal(result.overdueNonCompliant, 0);
+  assert.equal(result.pastDueNonCompliant, 1);
+  assert.deepEqual(result.periodDueRows.map(({ row }) => row.id), ['next']);
 });
 
 test('archive checkpoints are four chronological Mondays', () => {

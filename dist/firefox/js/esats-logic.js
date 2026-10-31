@@ -106,7 +106,8 @@ export function filterConfiguredEsatsApplications(applications, config) {
 }
 
 export function summarizeEsatsApplications(applications, now = new Date()) {
-  const newRows = applications.filter(isNewEsatsApplication);
+  const supportedRows = applications.filter((application) => !application.isRetired && !application.isMarkedForDeletion);
+  const newRows = supportedRows.filter(isNewEsatsApplication);
   const retiredRows = applications.filter((application) => application.isRetired || application.isMarkedForDeletion);
   const lifecycleRows = applications.filter((application) => application.lifecycleChangeTimestamp != null);
   const intervals = ESATS_INTERVALS.map((days) => ({
@@ -121,7 +122,9 @@ export function summarizeEsatsApplications(applications, now = new Date()) {
     markedForDeletion: applications.filter((application) => application.isMarkedForDeletion && olderThanDays(application.markedForDeletionTimestamp, 90, now)).length,
   };
   return {
-    supported: applications.length,
+    supported: supportedRows.length,
+    supportedRows,
+    excludedFromSupported: applications.length - supportedRows.length,
     newApplications: newRows.length,
     newRows,
     retiredTotal: applications.filter((application) => application.isRetired).length,

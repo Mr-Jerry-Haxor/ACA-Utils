@@ -240,14 +240,17 @@ function renderForecast() {
   const cadence = refs['forecast-cadence'].value;
   refs['forecast-period'].options[0].textContent = cadence === 'monthly' ? 'Current month' : 'Current week';
   refs['forecast-period'].options[1].textContent = cadence === 'monthly' ? 'Next month' : 'Next week';
+  const period = refs['forecast-period'].value;
+  const isNextPeriod = period === 'next';
   const now = new Date();
-  const window = forecastWindow(cadence, refs['forecast-period'].value, now);
+  const window = forecastWindow(cadence, period, now);
   const targets = [95, 96, 97, 98, 99, 100];
   const forecastRows = [];
   const results = state.dashboard.metrics.map((metric) => {
     const result = calculateForecastTargets(metric, (row) => metricDueDateValue({ ...row, _deliverableId: metric.id }, now), window, targets);
     const deliverable = forecastDeliverableLabel(metric.id);
-    result.dueRows.forEach(({ row, due, overdueNonCompliant }) => forecastRows.push({
+    const detailRows = isNextPeriod ? [...result.pastDueRows, ...result.periodDueRows] : result.dueRows;
+    detailRows.forEach(({ row, due, overdueNonCompliant }) => forecastRows.push({
       ...row, _deliverable: deliverable, _deliverableId: metric.id,
       _forecastDueDate: formatFullDate(due),
       _forecastScope: overdueNonCompliant ? 'Past-due non-compliant backlog' : 'Selected forecast period',
@@ -258,37 +261,56 @@ function renderForecast() {
           : 'Currently non-compliant and due in the selected period',
       _forecastAction: overdueNonCompliant ? 'Close overdue non-compliance' : row._compliant ? 'Renew or complete before due date' : 'Close current non-compliance',
     }));
-    return { metric, result, deliverable };
+    const workloadCount = isNextPeriod ? result.pastDueNonCompliant + result.periodDueRows.length : result.pastDueNonCompliant;
+    return { metric, result, deliverable, detailRows, workloadCount };
   });
   state.forecastRows = forecastRows;
   state.forecastWindow = window;
   const header = el('tr', {},
     el('th', { scope: 'col' }, 'Fed deliverables'),
-    el('th', { scope: 'col' }, 'Number of past dues'),
+    el('th', { scope: 'col' }, isNextPeriod
+      ? `Past dues + due ${cadence === 'monthly' ? 'next month' : 'next week'}`
+      : 'Number of past dues'),
     ...targets.map((target) => el('th', { scope: 'col' }, `To achieve ${target}%`)),
     el('th', { scope: 'col' }, 'Total applications'),
     el('th', { scope: 'col' }, 'Expand details'),
   );
-  const body = el('tbody', {}, ...results.map(({ metric, result, deliverable }) => {
+  const body = el('tbody', {}, ...results.map(({ metric, result, deliverable, detailRows, workloadCount }) => {
     const detailButton = el('button', {
-      class: 'button button-secondary forecast-detail-button', type: 'button', disabled: result.dueRows.length === 0,
-      title: `${formatNumber(result.dueRows.length)} forecast records for ${deliverable}`,
-    }, `Expand (${formatNumber(result.dueRows.length)})`);
+      class: 'button button-secondary forecast-detail-button', type: 'button', disabled: detailRows.length === 0,
+      title: `${formatNumber(detailRows.length)} forecast records for ${deliverable}`,
+    }, `Expand (${formatNumber(detailRows.length)})`);
     detailButton.addEventListener('click', () => openForecastDetails(metric.id));
     return el('tr', {},
       el('th', { scope: 'row' }, deliverable),
-      el('td', { class: result.overdueNonCompliant ? 'forecast-past-due' : '' }, formatNumber(result.overdueNonCompliant)),
+      el('td', {
+        class: workloadCount ? 'forecast-past-due' : '',
+        title: isNextPeriod ? `${formatNumber(result.pastDueNonCompliant)} past due + ${formatNumber(result.periodDueRows.length)} due next period` : `${formatNumber(result.pastDueNonCompliant)} past due`,
+      }, formatNumber(workloadCount)),
       ...targets.map((target) => el('td', {}, formatNumber(result.actionsByTarget[target]))),
       el('td', {}, formatNumber(metric.total)),
-      el('td', { class: 'forecast-detail-cell' }, detailButton, el('small', {}, `${formatNumber(result.atRisk)} becoming due`)),
+      el('td', { class: 'forecast-detail-cell' }, detailButton, el('small', {}, isNextPeriod
+        ? `${formatNumber(result.pastDueNonCompliant)} past due · ${formatNumber(result.periodDueRows.length)} due next`
+        : `${formatNumber(result.atRisk)} becoming due`)),
     );
   }));
+  const workloadTotal = results.reduce((sum, item) => sum + item.workloadCount, 0);
+  const targetTotals = Object.fromEntries(targets.map((target) => [target, results.reduce((sum, item) => sum + item.result.actionsByTarget[target], 0)]));
+  const footer = el('tfoot', {}, el('tr', {},
+    el('th', { scope: 'row' }, 'Column total'),
+    el('td', {}, formatNumber(workloadTotal)),
+    ...targets.map((target) => el('td', {}, formatNumber(targetTotals[target]))),
+    el('td', { 'aria-label': 'Total applications not totaled' }, '—'),
+    el('td', { 'aria-label': 'Details not totaled' }, '—'),
+  ));
   refs['forecast-summary'].replaceChildren(
     el('div', { class: 'forecast-table-caption' },
       el('strong', {}, window.label),
-      el('span', {}, 'Counts show the work required after applications becoming due in the selected period are considered.'),
+      el('span', {}, isNextPeriod
+        ? `The second column combines existing past dues with applications due ${cadence === 'monthly' ? 'next month' : 'next week'}.`
+        : 'Counts show existing past dues and the work required after selected-period due dates are considered.'),
     ),
-    el('div', { class: 'forecast-table-wrap' }, el('table', { class: 'forecast-table' }, el('thead', {}, header), body)),
+    el('div', { class: 'forecast-table-wrap' }, el('table', { class: 'forecast-table' }, el('thead', {}, header), body, footer)),
   );
 }
 
@@ -306,7 +328,7 @@ function openForecastDetails(metricId = null) {
 }
 
 function forecastDeliverableLabel(metricId) {
-  return ({ system: 'SMP', recovery: 'DLR', risk: 'RISK-Profiler', access: 'ACP', nist: 'NIST' })[metricId] ?? 'Forecast';
+  return ({ system: 'SCMP', recovery: 'DR Plan', risk: 'RISK-Profiler', access: 'ACP', nist: 'NIST' })[metricId] ?? 'Forecast';
 }
 
 function forecastWindow(cadence, period, now) {

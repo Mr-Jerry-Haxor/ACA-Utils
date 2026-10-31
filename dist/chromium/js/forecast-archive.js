@@ -1,9 +1,16 @@
 export function calculateForecastMetric(metric, dueDateForRow, window, targetPercent) {
-  const dueRows = metric.rows.map((row) => {
+  const asOf = window.asOf ?? window.start;
+  const evaluatedRows = metric.rows.map((row) => {
     const due = dueDateForRow(row);
-    const overdueNonCompliant = Boolean(due && window.includeOverdueNonCompliant && !row._compliant && due < window.asOf);
+    const overdueNonCompliant = Boolean(due && window.includeOverdueNonCompliant && !row._compliant && due < asOf);
     return { row, due, overdueNonCompliant };
-  })
+  });
+  const pastDueRows = evaluatedRows.filter(({ row, due }) => due && !row._compliant && due < asOf)
+    .map((item) => ({ ...item, overdueNonCompliant: true }))
+    .sort((left, right) => left.due - right.due);
+  const periodDueRows = evaluatedRows.filter(({ due }) => due && due >= window.start && due <= window.end)
+    .sort((left, right) => left.due - right.due);
+  const dueRows = evaluatedRows
     .filter(({ due, overdueNonCompliant }) => due && ((due >= window.start && due <= window.end) || overdueNonCompliant))
     .sort((left, right) => left.due - right.due);
   const atRisk = dueRows.filter(({ row }) => row._compliant).length;
@@ -20,6 +27,9 @@ export function calculateForecastMetric(metric, dueDateForRow, window, targetPer
   const nextPointActions = Math.max(0, Math.ceil(metric.total * nextPointTarget / 100) - metric.compliant);
   return {
     dueRows,
+    periodDueRows,
+    pastDueRows,
+    pastDueNonCompliant: pastDueRows.length,
     atRisk,
     dueNonCompliant,
     overdueNonCompliant,
