@@ -44,7 +44,7 @@ const SUPPORTED_COLUMNS = [
   dateColumn('productionStartDate', 'Production Start'), dateColumn('retiredStartDate', 'Retired Start'),
   dateColumn('lifecycleChangeDate', 'Latest Lifecycle Change'), column('replacementSystem', 'Replacement System'),
   column('onHold', 'On Hold', yesNo), column('onHoldJustification', 'On-Hold Justification'),
-  column('lifecycleComment', 'Lifecycle Comment'), column('allContacts', 'All Contacts', null, { className: 'contacts-column', expandable: true }),
+  column('lifecycleComment', 'Lifecycle Comment'),
   column('_syncDetailStatus', 'Detail Sync Status', (_, row) => row.syncErrors?.length ? `Unavailable: ${row.syncErrors.join('; ')}` : 'Complete'),
 ];
 
@@ -535,22 +535,7 @@ function createDataTable(root, columns, filename) {
 function renderTableCell(row, column) {
   const value = displayValue(row, column);
   const cell = el('td', { class: column.className ?? '' });
-  if (!column.expandable) {
-    cell.textContent = value;
-    return cell;
-  }
-  const wrapper = el('div', { class: 'expandable-cell' }, el('span', { class: 'expandable-cell-text' }, value));
-  if (value.length > 110) {
-    const button = el('button', { class: 'expand-cell-button', type: 'button', 'aria-expanded': 'false' }, 'Expand contacts');
-    button.addEventListener('click', () => {
-      const expanded = wrapper.classList.toggle('is-expanded');
-      cell.classList.toggle('is-expanded', expanded);
-      button.textContent = expanded ? 'Collapse contacts' : 'Expand contacts';
-      button.setAttribute('aria-expanded', String(expanded));
-    });
-    wrapper.append(button);
-  }
-  cell.append(wrapper);
+  cell.textContent = value;
   return cell;
 }
 

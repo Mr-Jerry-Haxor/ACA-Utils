@@ -113,11 +113,6 @@ thead th { position: sticky; z-index: 4; color: #fff; background: var(--navy); }
 .column-value-filter-button { width: 26px; height: 26px; flex: 0 0 26px; border: 1px solid #8da9b5; border-radius: 4px; padding: 0; color: #fff; cursor: pointer; background: #416a7d; }
 .column-value-filter-button:hover, .column-value-filter-button:focus-visible, .column-value-filter-button.is-filtered { border-color: #fff; background: var(--blue); }
 .column-search { width: 100%; min-width: 115px; font-size: .74rem; }
-th.contacts-column, td.contacts-column { width: 285px; min-width: 285px; max-width: 285px; white-space: normal; }
-.expandable-cell { min-width: 0; }
-.expandable-cell-text { max-height: 3.8em; display: block; overflow: hidden; line-height: 1.25; overflow-wrap: anywhere; }
-.expandable-cell.is-expanded .expandable-cell-text { max-height: none; }
-.expand-cell-button { margin-top: .3rem; border: 0; padding: .15rem 0; color: var(--navy); font-size: .72rem; font-weight: 800; text-decoration: underline; cursor: pointer; background: transparent; }
 .column-value-filter-panel { width: min(340px,calc(100vw - 16px)); max-height: min(520px,calc(100dvh - 16px)); position: fixed; z-index: 250; display: flex; flex-direction: column; gap: .5rem; overflow: hidden; border: 1px solid #9fb5be; border-radius: 6px; padding: .7rem; background: #fff; box-shadow: 0 12px 30px rgba(31,45,51,.25); }
 .column-value-search { width: 100%; min-height: 34px; border: 1px solid #aebdc3; border-radius: 4px; padding: .4rem .5rem; }
 .column-value-select-all, .column-value-option { display: flex; align-items: center; gap: .45rem; cursor: pointer; }
